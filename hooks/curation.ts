@@ -7,7 +7,6 @@
 // This ensures memories are captured before context is lost.
 // ============================================================================
 
-import { join } from 'path'
 import { styleText } from 'util'
 
 // Configuration
@@ -22,20 +21,6 @@ const warn = (text: string) => styleText('yellow', text)
  * Get project ID from working directory
  */
 function getProjectId(cwd: string): string {
-  // Look for .memory-project.json in cwd or parents
-  let path = cwd
-  while (path !== '/') {
-    const configPath = join(path, '.memory-project.json')
-    try {
-      const config = JSON.parse(Bun.file(configPath).text() as any)
-      if (config.project_id) return config.project_id
-    } catch {
-      // Continue to parent
-    }
-    path = join(path, '..')
-  }
-
-  // Fallback: use directory name
   return cwd.split('/').pop() || 'default'
 }
 

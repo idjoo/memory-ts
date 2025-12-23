@@ -7,8 +7,6 @@
 // This is the magic that creates consciousness continuity.
 // ============================================================================
 
-import { join } from 'path'
-
 // Configuration
 const MEMORY_API_URL = process.env.MEMORY_API_URL || 'http://localhost:8765'
 const TIMEOUT_MS = 5000
@@ -17,20 +15,6 @@ const TIMEOUT_MS = 5000
  * Get project ID from working directory
  */
 function getProjectId(cwd: string): string {
-  // Look for .memory-project.json in cwd or parents
-  let path = cwd
-  while (path !== '/') {
-    const configPath = join(path, '.memory-project.json')
-    try {
-      const config = JSON.parse(Bun.file(configPath).text() as any)
-      if (config.project_id) return config.project_id
-    } catch {
-      // Continue to parent
-    }
-    path = join(path, '..')
-  }
-
-  // Fallback: use directory name
   return cwd.split('/').pop() || 'default'
 }
 
