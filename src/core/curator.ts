@@ -296,20 +296,23 @@ Return ONLY this JSON structure:
 
   /**
    * Curate using CLI subprocess (for hook mode)
-   * Resumes a Claude Code session and asks it to curate
+   * Resumes a session and asks it to curate
    */
   async curateWithCLI(
     sessionId: string,
     triggerType: CurationTrigger = 'session_end',
-    cwd?: string
+    cwd?: string,
+    cliTypeOverride?: 'claude-code' | 'gemini-cli'
   ): Promise<CurationResult> {
+    const type = cliTypeOverride ?? this._config.cliType
     const systemPrompt = this.buildCurationPrompt(triggerType)
     const userMessage = 'This session has ended. Please curate the memories from our conversation according to the instructions in your system prompt. Return ONLY the JSON structure.'
 
     // Build CLI command based on type
     const args: string[] = []
+    let command = this._config.cliCommand
 
-    if (this._config.cliType === 'claude-code') {
+    if (type === 'claude-code') {
       args.push(
         '--resume', sessionId,
         '-p', userMessage,
@@ -318,7 +321,8 @@ Return ONLY this JSON structure:
         '--max-turns', '1'
       )
     } else {
-      // gemini-cli (doesn't support --append-system-prompt)
+      // gemini-cli
+      command = 'gemini' // Default to 'gemini' in PATH for gemini-cli
       args.push(
         '--resume', sessionId,
         '-p', `${systemPrompt}\n\n${userMessage}`,
@@ -327,7 +331,7 @@ Return ONLY this JSON structure:
     }
 
     // Execute CLI
-    const proc = Bun.spawn([this._config.cliCommand, ...args], {
+    const proc = Bun.spawn([command, ...args], {
       cwd,
       env: {
         ...process.env,

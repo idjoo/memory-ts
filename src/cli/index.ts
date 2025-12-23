@@ -23,6 +23,7 @@ ${c.bold('Commands:')}
   ${c.command('serve')}      Start the memory server ${c.muted('(default)')}
   ${c.command('stats')}      Show memory statistics
   ${c.command('install')}    Set up Claude Code hooks
+  ${c.command('install-gemini')} Set up Gemini CLI hooks
   ${c.command('doctor')}     Check system health
   ${c.command('help')}       Show this help message
 
@@ -100,6 +101,12 @@ async function main() {
     case 'setup': {
       const { install } = await import('./commands/install.ts')
       await install(values)
+      break
+    }
+
+    case 'install-gemini': {
+      const { installGemini } = await import('./commands/install-gemini.ts')
+      await installGemini(values)
       break
     }
 

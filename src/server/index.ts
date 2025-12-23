@@ -166,7 +166,8 @@ export async function createServer(config: ServerConfig = {}) {
               const result = await curator.curateWithCLI(
                 body.claude_session_id,
                 body.trigger,
-                body.cwd
+                body.cwd,
+                body.cli_type
               )
 
               if (result.memories.length > 0) {
