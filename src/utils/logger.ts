@@ -170,6 +170,15 @@ export const logger = {
       ? query.slice(0, 40) + '...'
       : query
 
+    // Emoji map for quick visual scanning
+    const emojiMap: Record<string, string> = {
+      breakthrough: '💡', decision: '⚖️', personal: '💜', technical: '🔧',
+      technical_state: '📍', unresolved: '❓', preference: '⚙️', workflow: '🔄',
+      architectural: '🏗️', debugging: '🐛', philosophy: '🌀', todo: '🎯',
+      implementation: '⚡', problem_solution: '✅', project_context: '📦',
+      milestone: '🏆', general: '📝',
+    }
+
     console.log()
     console.log(`${timestamp()} ${style('cyan', sym.sparkles)} ${style('bold', `SURFACING ${memories.length} MEMORIES`)}`)
     console.log(`      ${style('dim', 'query:')} "${queryPreview}"`)
@@ -183,14 +192,14 @@ export const logger = {
 
     memories.forEach((m, i) => {
       const score = style('green', `${(m.score * 100).toFixed(0)}%`)
-      const type = style('cyan', m.context_type)
+      const emoji = emojiMap[m.context_type?.toLowerCase()] ?? '📝'
       const num = style('dim', `${i + 1}.`)
 
       const preview = m.content.length > 55
         ? m.content.slice(0, 55) + style('dim', '...')
         : m.content
 
-      console.log(`   ${num} [${score}] ${type}`)
+      console.log(`   ${num} [${score}] ${emoji}`)
       console.log(`      ${preview}`)
     })
     console.log()
@@ -253,6 +262,104 @@ export const logger = {
       console.log(`      ${style('dim', 'result:')} no memories to extract`)
     }
     console.log()
+  },
+
+  /**
+   * Log memory retrieval scoring details
+   */
+  logRetrievalScoring(params: {
+    totalMemories: number
+    currentMessage: string
+    alreadyInjected: number
+    mustIncludeCount: number
+    remainingSlots: number
+    finalCount: number
+    selectedMemories: Array<{
+      content: string
+      reasoning: string
+      score: number
+      relevance_score: number
+      importance_weight: number
+      context_type: string
+      semantic_tags: string[]
+      components: {
+        trigger: number
+        vector: number
+        importance: number
+        temporal: number
+        context: number
+        tags: number
+        question: number
+        emotion: number
+        problem: number
+        action: number
+      }
+    }>
+  }) {
+    const { totalMemories, currentMessage, alreadyInjected, mustIncludeCount, remainingSlots, finalCount, selectedMemories } = params
+
+    console.log()
+    console.log(`${timestamp()} ${style('magenta', sym.brain)} ${style('bold', 'TWO-STAGE MEMORY FILTERING')}`)
+    console.log(`      ${style('dim', 'candidates:')} ${totalMemories} memories`)
+    console.log(`      ${style('dim', 'already injected:')} ${alreadyInjected}`)
+
+    const msgPreview = currentMessage.length > 60
+      ? currentMessage.slice(0, 60) + '...'
+      : currentMessage
+    console.log(`      ${style('dim', 'trigger:')} "${msgPreview}"`)
+    console.log()
+
+    // Stage summary
+    console.log(`      ${style('cyan', 'Stage 1:')} ${mustIncludeCount} must-include (critical/action-required)`)
+    console.log(`      ${style('cyan', 'Stage 2:')} ${remainingSlots} slots for scored selection`)
+    console.log(`      ${style('green', 'Final:')} ${finalCount} memories selected`)
+    console.log()
+
+    if (selectedMemories.length === 0) {
+      console.log(`      ${style('dim', '📭 No relevant memories for this context')}`)
+      console.log()
+      return
+    }
+
+    // Detailed breakdown
+    console.log(style('dim', '      ─'.repeat(30)))
+    console.log(`      ${style('bold', 'SELECTION DETAILS')}`)
+    console.log()
+
+    selectedMemories.forEach((m, i) => {
+      const num = style('dim', `${i + 1}.`)
+      const score = style('green', `${(m.score * 100).toFixed(0)}%`)
+      const relevance = style('cyan', `rel:${(m.relevance_score * 100).toFixed(0)}%`)
+      const type = style('yellow', m.context_type.toUpperCase())
+
+      console.log(`   ${num} [${score} ${relevance}] ${type}`)
+
+      // Content preview
+      const preview = m.content.length > 60
+        ? m.content.slice(0, 60) + style('dim', '...')
+        : m.content
+      console.log(`      ${style('white', preview)}`)
+
+      // Scoring components (top 3)
+      const components = Object.entries(m.components)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .filter(([, v]) => v > 0.1)
+        .map(([k, v]) => `${k}:${(v * 100).toFixed(0)}%`)
+        .join(', ')
+
+      if (components) {
+        console.log(`      ${style('dim', 'scores:')} ${components}`)
+      }
+
+      // Tags
+      if (m.semantic_tags?.length) {
+        const tags = m.semantic_tags.slice(0, 3).join(', ')
+        console.log(`      ${style('dim', 'tags:')} ${tags}`)
+      }
+
+      console.log()
+    })
   },
 }
 

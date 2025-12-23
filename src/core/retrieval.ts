@@ -6,6 +6,7 @@
 
 import type { StoredMemory, RetrievalResult } from '../types/memory.ts'
 import { cosineSimilarity } from '@rlabs-inc/fsdb'
+import { logger } from '../utils/logger.ts'
 
 /**
  * Session context for retrieval
@@ -46,6 +47,14 @@ interface ScoredMemory {
 }
 
 /**
+ * Extended result with components for logging
+ */
+interface ExtendedRetrievalResult extends RetrievalResult {
+  reasoning: string
+  components: ScoringComponents
+}
+
+/**
  * Smart Vector Retrieval - The 10-Dimensional Algorithm
  *
  * This is the innovation: combining vector similarity with rich
@@ -61,7 +70,8 @@ export class SmartVectorRetrieval {
     currentMessage: string,
     queryEmbedding: Float32Array | number[],
     sessionContext: SessionContext,
-    maxMemories: number = 5
+    maxMemories: number = 5,
+    alreadyInjectedCount: number = 0
   ): RetrievalResult[] {
     if (!allMemories.length) {
       return []
@@ -274,6 +284,26 @@ export class SmartVectorRetrieval {
 
     // Respect the max_memories limit strictly
     const finalSelected = selected.slice(0, maxMemories)
+
+    // Log the retrieval scoring details
+    logger.logRetrievalScoring({
+      totalMemories: allMemories.length,
+      currentMessage,
+      alreadyInjected: alreadyInjectedCount,
+      mustIncludeCount: mustInclude.length,
+      remainingSlots: remainingSlots,
+      finalCount: finalSelected.length,
+      selectedMemories: finalSelected.map(item => ({
+        content: item.memory.content,
+        reasoning: item.reasoning,
+        score: item.score,
+        relevance_score: item.relevance_score,
+        importance_weight: item.memory.importance_weight ?? 0.5,
+        context_type: item.memory.context_type ?? 'general',
+        semantic_tags: item.memory.semantic_tags ?? [],
+        components: item.components,
+      })),
+    })
 
     // Convert to RetrievalResult format
     return finalSelected.map(item => ({

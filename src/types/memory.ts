@@ -164,7 +164,40 @@ export interface RetrievalResult extends StoredMemory {
  */
 export interface SessionPrimer {
   temporal_context: string                  // "Last session: 2 days ago"
+  current_datetime: string                  // "Monday, December 23, 2024 • 3:45 PM EST"
+  session_number: number                    // Which session this is (1, 2, 43, etc.)
   session_summary?: string                  // Previous session summary
   project_status?: string                   // Current project state
   key_memories?: StoredMemory[]             // Essential memories to surface
+}
+
+/**
+ * Emoji map for memory context types
+ * Compact visual representation for efficient parsing
+ */
+export const MEMORY_TYPE_EMOJI: Record<string, string> = {
+  breakthrough: '💡',      // Insight, discovery
+  decision: '⚖️',          // Choice made
+  personal: '💜',          // Relationship, friendship
+  technical: '🔧',         // Technical knowledge
+  technical_state: '📍',   // Current state
+  unresolved: '❓',        // Open question
+  preference: '⚙️',        // User preference
+  workflow: '🔄',          // How work flows
+  architectural: '🏗️',     // System design
+  debugging: '🐛',         // Debug insight
+  philosophy: '🌀',        // Deeper thinking
+  todo: '🎯',              // Action needed
+  implementation: '⚡',    // Implementation detail
+  problem_solution: '✅',  // Problem→Solution pair
+  project_context: '📦',   // Project context
+  milestone: '🏆',         // Achievement
+  general: '📝',           // General note
+}
+
+/**
+ * Get emoji for a context type, with fallback
+ */
+export function getMemoryEmoji(contextType: string): string {
+  return MEMORY_TYPE_EMOJI[contextType.toLowerCase()] ?? '📝'
 }

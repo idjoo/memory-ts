@@ -6,3 +6,4 @@ export { MemoryEngine, createEngine, type EngineConfig, type StorageMode, type C
 export { MemoryStore, createStore, type StoreConfig } from './store.ts'
 export { SmartVectorRetrieval, createRetrieval, type SessionContext } from './retrieval.ts'
 export { Curator, createCurator, type CuratorConfig } from './curator.ts'
+export { EmbeddingGenerator, createEmbeddings, getDefaultEmbeddings, type EmbeddingConfig } from './embeddings.ts'

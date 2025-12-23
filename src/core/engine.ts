@@ -14,6 +14,7 @@ import type {
   SessionPrimer,
   CurationResult,
 } from '../types/memory.ts'
+import { getMemoryEmoji, MEMORY_TYPE_EMOJI } from '../types/memory.ts'
 
 /**
  * Storage mode for memories
@@ -224,7 +225,8 @@ export class MemoryEngine {
       currentMessage,
       queryEmbedding ?? new Float32Array(384),  // Empty embedding if no embedder
       sessionContext,
-      maxMemories
+      maxMemories,
+      injectedIds.size  // Pass count of already-injected memories for logging
     )
 
     // Update injected memories for deduplication
@@ -332,11 +334,49 @@ export class MemoryEngine {
       temporalContext = this._formatTimeSince(timeSince)
     }
 
+    // Format current datetime with full context
+    const currentDatetime = this._formatCurrentDatetime()
+
+    // Session number is totalSessions + 1 (this is the new session)
+    const sessionNumber = stats.totalSessions + 1
+
     return {
       temporal_context: temporalContext,
+      current_datetime: currentDatetime,
+      session_number: sessionNumber,
       session_summary: summary?.summary,
       project_status: snapshot ? this._formatSnapshot(snapshot) : undefined,
     }
+  }
+
+  /**
+   * Format current datetime with full context
+   * Example: "Monday, December 23, 2024 • 3:45 PM • EST"
+   */
+  private _formatCurrentDatetime(): string {
+    const now = new Date()
+
+    // Day of week
+    const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' })
+
+    // Full date
+    const fullDate = now.toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    })
+
+    // Time with AM/PM
+    const time = now.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+
+    // Timezone abbreviation
+    const timezone = now.toLocaleTimeString('en-US', { timeZoneName: 'short' }).split(' ').pop()
+
+    return `${dayOfWeek}, ${fullDate} • ${time} • ${timezone}`
   }
 
   private _formatTimeSince(ms: number): string {
@@ -385,9 +425,11 @@ export class MemoryEngine {
   private _formatPrimer(primer: SessionPrimer): string {
     const parts: string[] = ['# Continuing Session']
 
-    if (primer.temporal_context) {
-      parts.push(`*${primer.temporal_context}*`)
-    }
+    // Session number
+    parts.push(`*Session #${primer.session_number}${primer.temporal_context ? ` • ${primer.temporal_context}` : ''}*`)
+
+    // Current datetime (critical for temporal awareness)
+    parts.push(`📅 ${primer.current_datetime}`)
 
     if (primer.session_summary) {
       parts.push(`\n**Previous session**: ${primer.session_summary}`)
@@ -397,6 +439,9 @@ export class MemoryEngine {
       parts.push(`\n**Project status**: ${primer.project_status}`)
     }
 
+    // Emoji legend for memory types (compact reference)
+    parts.push(`\n**Memory types**: 💡breakthrough ⚖️decision 💜personal 🔧technical 📍state ❓unresolved ⚙️preference 🔄workflow 🏗️architecture 🐛debug 🌀philosophy 🎯todo ⚡impl ✅solved 📦project 🏆milestone`)
+
     parts.push(`\n*Memories will surface naturally as we converse.*`)
 
     return parts.join('\n')
@@ -404,6 +449,7 @@ export class MemoryEngine {
 
   /**
    * Format memories for injection
+   * Uses emoji types for compact, scannable representation
    */
   private _formatMemories(memories: RetrievalResult[]): string {
     if (!memories.length) return ''
@@ -414,9 +460,10 @@ export class MemoryEngine {
     for (const memory of memories) {
       const tags = memory.semantic_tags?.join(', ') || ''
       const importance = memory.importance_weight?.toFixed(1) || '0.5'
-      const contextType = memory.context_type?.toUpperCase() || 'GENERAL'
+      const emoji = getMemoryEmoji(memory.context_type || 'general')
 
-      parts.push(`[${contextType} • ${importance}] [${tags}] ${memory.content}`)
+      // Compact format: [emoji • weight] [tags] content
+      parts.push(`[${emoji} • ${importance}] [${tags}] ${memory.content}`)
     }
 
     return parts.join('\n')

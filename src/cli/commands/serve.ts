@@ -14,7 +14,9 @@ interface ServeOptions {
 export async function serve(options: ServeOptions) {
   const port = parseInt(options.port || process.env.MEMORY_PORT || '8765')
   const host = process.env.MEMORY_HOST || 'localhost'
-  const storageMode = (process.env.MEMORY_STORAGE_MODE || 'central') as 'central' | 'local'
+  const storageMode = (process.env.MEMORY_STORAGE_MODE || 'central') as
+    | 'central'
+    | 'local'
   const apiKey = process.env.ANTHROPIC_API_KEY
 
   if (!options.quiet) {
@@ -24,7 +26,7 @@ export async function serve(options: ServeOptions) {
   }
 
   try {
-    const { server } = createServer({
+    const { server, embeddings } = await createServer({
       port,
       host,
       storageMode,
@@ -34,10 +36,17 @@ export async function serve(options: ServeOptions) {
     if (!options.quiet) {
       const url = `http://${host}:${port}`
 
-      console.log(`  ${c.success(symbols.tick)} Server running at ${c.cyan(url)}`)
+      console.log(
+        `  ${c.success(symbols.tick)} Server running at ${c.cyan(url)}`
+      )
       console.log()
       console.log(`  ${fmt.kv('Storage', storageMode)}`)
-      console.log(`  ${fmt.kv('Curation', apiKey ? c.success('enabled') : c.warn('disabled'))}`)
+      console.log(
+        `  ${fmt.kv(
+          'Embeddings',
+          embeddings.isReady ? c.success('loaded') : c.warn('not loaded')
+        )}`
+      )
       console.log()
       console.log(c.muted(`  Press Ctrl+C to stop`))
       console.log()
@@ -62,14 +71,15 @@ export async function serve(options: ServeOptions) {
       server.stop()
       process.exit(0)
     })
-
   } catch (error: any) {
     if (error.code === 'EADDRINUSE') {
       console.error(c.error(`${symbols.cross} Port ${port} is already in use`))
       console.log(c.muted(`  Try a different port with --port <number>`))
       console.log(c.muted(`  Or check if another memory server is running`))
     } else {
-      console.error(c.error(`${symbols.cross} Failed to start server: ${error.message}`))
+      console.error(
+        c.error(`${symbols.cross} Failed to start server: ${error.message}`)
+      )
     }
     process.exit(1)
   }

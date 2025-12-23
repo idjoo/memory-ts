@@ -5,6 +5,7 @@
 
 import { MemoryEngine, createEngine, type EngineConfig } from '../core/engine.ts'
 import { Curator, createCurator, type CuratorConfig } from '../core/curator.ts'
+import { EmbeddingGenerator, createEmbeddings } from '../core/embeddings.ts'
 import type { CurationTrigger } from '../types/memory.ts'
 import { logger } from '../utils/logger.ts'
 
@@ -49,7 +50,7 @@ interface CheckpointRequest {
 /**
  * Create and start the memory server
  */
-export function createServer(config: ServerConfig = {}) {
+export async function createServer(config: ServerConfig = {}) {
   const {
     port = 8765,
     host = 'localhost',
@@ -57,7 +58,16 @@ export function createServer(config: ServerConfig = {}) {
     ...engineConfig
   } = config
 
-  const engine = createEngine(engineConfig)
+  // Initialize embeddings (loads model into memory)
+  const embeddings = createEmbeddings()
+  logger.info('Initializing embedding model (this may take a moment on first run)...')
+  await embeddings.initialize()
+
+  // Create engine with embedder
+  const engine = createEngine({
+    ...engineConfig,
+    embedder: embeddings.createEmbedder(),
+  })
   const curator = createCurator(curatorConfig)
 
   const server = Bun.serve({
@@ -217,6 +227,7 @@ export function createServer(config: ServerConfig = {}) {
     server,
     engine,
     curator,
+    embeddings,
     stop: () => server.stop(),
   }
 }
@@ -228,7 +239,7 @@ if (import.meta.main) {
   const storageMode = (process.env.MEMORY_STORAGE_MODE ?? 'central') as 'central' | 'local'
   const apiKey = process.env.ANTHROPIC_API_KEY
 
-  createServer({
+  await createServer({
     port,
     host,
     storageMode,
