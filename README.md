@@ -55,35 +55,38 @@ Uses `all-MiniLM-L6-v2` for 384-dimensional embeddings. Memories are retrieved b
 Sub-microsecond vector search via fsdb
 ```
 
-### Precision-First Retrieval Algorithm
+### Activation Signal Retrieval Algorithm
 
-The retrieval system uses a two-phase scoring approach with dual gatekeepers. Philosophy: **quality over quantity, silence over noise**.
+The retrieval system uses an activation signal approach. Philosophy: **quality over quantity, silence over noise**.
 
-**Phase 1 - Relevance (max 35%)** - Must pass 8% gatekeeper to continue
+A memory is relevant if **multiple signals agree** it should activate. Not coincidence - intentionally crafted metadata matching intentional queries.
 
-| Dimension | Weight | Description |
-|-----------|--------|-------------|
-| Trigger phrases | 11% | Handcrafted activation patterns (primary signal) |
-| Vector similarity | 9% | Semantic embedding match |
-| Semantic tags | 6% | Direct keyword overlap |
-| Word overlap | 5% | Corroboration from domain, feature, reasoning |
-| Question types | 2% | How/why/what pattern matching |
-| Domain/feature | 2% | Specific area matching |
+**Phase 0 - Pre-Filter**: Exclude inactive, superseded, or wrong-scope memories
 
-**Phase 2 - Value (max 65%)** - Only calculated if relevance passes
+**Phase 1 - Activation Signals** (6 binary signals, need ≥2 to proceed)
 
-| Dimension | Weight | Description |
-|-----------|--------|-------------|
-| Importance weight | 16% | Curator's assessment (most influential) |
-| Context alignment | 10% | Context type matching message intent |
-| Confidence score | 8% | Curator's certainty |
-| Temporal score | 8% | Eternal > long-term > short-term |
-| Action required | 7% | Priority boost for actionable items |
-| Emotional resonance | 6% | Emotional context matching |
-| Problem-solution | 5% | Utility for debugging |
-| Awaiting flags | 5% | Boost for pending implementation/decisions |
+| Signal | Description |
+|--------|-------------|
+| Trigger | Trigger phrase matched (≥50% word match) |
+| Tags | 2+ semantic tags found in message |
+| Domain | Domain word found in message |
+| Feature | Feature word found in message |
+| Content | 3+ significant content words overlap |
+| Vector | Semantic similarity ≥ 40% |
 
-**Final Gatekeeper**: Total score must exceed 40% to surface. Returns nothing if nothing qualifies.
+**Phase 2 - Importance Ranking** (among relevant memories)
+
+| Bonus | Amount | Condition |
+|-------|--------|-----------|
+| Base | 0-1 | `importance_weight` from curator |
+| Signal boost | +0.2 / +0.1 | 4+ or 3 signals fired |
+| Awaiting | +0.15 / +0.1 | `awaiting_implementation` / `awaiting_decision` |
+| Temporal | +0.1 / +0.05 | `eternal` / `long_term` temporal class |
+| Context match | +0.1 | User intent matches memory type |
+| Problem/solution | +0.1 | User has problem words + memory is pair |
+| Confidence penalty | -0.1 | `confidence_score` < 0.5 |
+
+**Selection**: Sort by signal count (DESC) → importance score (DESC). Max 2 global memories (tech prioritized), project memories fill remaining slots.
 
 ### Global vs Project Memories
 

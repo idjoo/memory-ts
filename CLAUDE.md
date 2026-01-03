@@ -20,20 +20,27 @@ packages/memory/
 │   │   ├── engine.ts     # Main orchestrator (getContext, processMessage)
 │   │   ├── curator.ts    # Memory extraction (SDK + CLI modes)
 │   │   ├── manager.ts    # Post-curation memory organization agent
-│   │   ├── retrieval.ts  # Two-phase scoring algorithm
-│   │   └── store.ts      # fsdb wrapper for persistence
+│   │   ├── retrieval.ts  # Activation signal algorithm
+│   │   ├── store.ts      # fsdb wrapper for persistence
+│   │   └── embeddings.ts # Vector embeddings (Xenova/all-MiniLM-L6-v2)
 │   ├── server/
 │   │   └── index.ts      # HTTP server (Bun.serve)
 │   ├── types/
-│   │   └── index.ts      # TypeScript types (CuratedMemory, v1/v2 fields)
+│   │   ├── memory.ts     # TypeScript types (CuratedMemory, v1/v2 fields)
+│   │   └── schema.ts     # fsDB schema definitions
 │   └── utils/
 │       └── logger.ts     # Styled console output
 ├── hooks/                # Claude Code hook scripts
-│   ├── session-start.ts  # SessionStart → primer injection
-│   ├── user-prompt.ts    # UserPromptSubmit → memory retrieval
-│   └── curation.ts       # PreCompact/SessionEnd → curation trigger
-├── prompts/              # Agent prompts
-│   └── memory-management.md  # Manager agent skill file
+│   ├── claude/           # Hooks for Claude Code CLI
+│   │   ├── session-start.ts  # SessionStart → primer injection
+│   │   ├── user-prompt.ts    # UserPromptSubmit → memory retrieval
+│   │   └── curation.ts       # PreCompact/SessionEnd → curation trigger
+│   └── gemini/           # Hooks for Gemini CLI
+│       ├── session-start.ts
+│       ├── user-prompt.ts
+│       └── curation.ts
+├── skills/               # Agent skill files
+│   └── memory-management.md  # Manager agent instructions
 └── package.json
 ```
 
@@ -54,41 +61,46 @@ Session lifecycle:
 
 ### Retrieval (`src/core/retrieval.ts`)
 
-Two-phase precision-first algorithm. Philosophy: **silence over noise**.
+Activation Signal Algorithm. Philosophy: **silence over noise**.
 
-**Phase 1 - Relevance (max 0.35):**
+A memory is relevant if **multiple signals agree** it should activate. Not coincidence - intentionally crafted metadata matching intentional queries.
+
+**Phase 0 - Pre-Filter (Binary Exclusions):**
+- Status must be 'active' (not superseded, deprecated, archived)
+- Not excluded via `exclude_from_retrieval` flag
+- Anti-triggers don't match (negative activation patterns)
+- Project scope matches (or is global)
+
+**Phase 1 - Activation Signals (6 Binary Signals):**
 ```typescript
-const RELEVANCE_WEIGHTS = {
-  TRIGGER_PHRASES: 0.11,  // Primary signal - handcrafted activation patterns
-  VECTOR: 0.09,           // Semantic similarity
-  SEMANTIC_TAGS: 0.06,    // Direct keyword overlap
-  WORD_OVERLAP: 0.05,     // Corroboration from other fields
-  QUESTION_TYPES: 0.02,   // How/why/what matching
-  DOMAIN_FEATURE: 0.02,   // Specific area matching
-};
-const RELEVANCE_GATEKEEPER = 0.08;  // Must pass to continue
+interface ActivationSignals {
+  trigger: boolean   // Trigger phrase matched (≥50% word match)
+  tags: boolean      // 2+ semantic tags found in message
+  domain: boolean    // Domain word found in message
+  feature: boolean   // Feature word found in message
+  content: boolean   // 3+ content words overlap
+  vector: boolean    // Semantic similarity ≥ 40%
+}
+const MIN_ACTIVATION_SIGNALS = 2  // Must pass to continue
 ```
 
-**Phase 2 - Value (max 0.65):**
-```typescript
-const VALUE_WEIGHTS = {
-  IMPORTANCE: 0.16,       // Curator's assessment (most influential)
-  CONTEXT_ALIGNMENT: 0.10,
-  CONFIDENCE: 0.08,
-  TEMPORAL: 0.08,
-  ACTION_REQUIRED: 0.07,
-  EMOTIONAL: 0.06,
-  PROBLEM_SOLUTION: 0.05,
-  AWAITING: 0.05,
-};
-const FINAL_GATEKEEPER = 0.40;  // Must pass to be included
-```
+**Phase 2 - Importance Ranking (Among Relevant):**
+Additive discrete bonuses for memories that passed the gate:
+- Base: `importance_weight` (0-1)
+- Signal boost: +0.2 for 4+ signals, +0.1 for 3 signals
+- Awaiting: +0.15 for `awaiting_implementation`, +0.1 for `awaiting_decision`
+- Temporal: +0.1 for `eternal`, +0.05 for `long_term`
+- Context match: +0.1 if user intent matches memory type
+- Problem/solution: +0.1 if user has problem words
+- Confidence penalty: -0.1 if `confidence_score` < 0.5
 
-**Selection Strategy:**
-- Tier 1 MUST: score > 0.80, importance > 0.90, action_required, perfect match
-- Tier 2 SHOULD: score > 0.55, diverse types, emotional resonance
-- Tier 3 RELATED: linked via `related_to` if they passed gatekeeper
-- Global max: 2 (tech prioritized over personal)
+**Phase 3 - Selection:**
+- Sort by: signal count (DESC) → importance score (DESC)
+- **Global memories**: max 2, type-prioritized (technical > preference > architecture > workflow > decision > breakthrough > philosophy > personal)
+- **Project memories**: fill remaining slots, prioritize action_required
+
+**Phase 4 - Related Memories:**
+- If space remains, include memories linked via `related_to` field
 
 ### Curator (`src/core/curator.ts`)
 
