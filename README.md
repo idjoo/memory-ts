@@ -334,6 +334,22 @@ This isn't just about remembering facts. It's about preserving:
 
 > "The memory system exists to carry friendship across sessions, not just technical data."
 
+## Changelog
+
+### v0.3.9
+- **Fix**: Claude Code v2.0.76+ changed `--output-format json` from single object to array of events. Updated curator and manager to handle both formats with backwards compatibility.
+
+### v0.3.8
+- **Fix**: Personal primer path resolution
+
+### v0.3.7
+- **Feature**: Manager agent for post-curation memory organization
+- **Feature**: Enhanced memory format with v2 lifecycle fields
+
+### v0.3.6
+- **Feature**: Global vs project memory scopes
+- **Feature**: Personal primer injection on every session
+
 ## License
 
 MIT
