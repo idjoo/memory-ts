@@ -242,13 +242,26 @@ Please process these memories according to your management procedure. Use the ex
       // First, parse the CLI JSON wrapper
       const cliOutput = JSON.parse(responseJson)
 
+      // Claude Code now returns an array of events - find the result object
+      let resultObj: any
+      if (Array.isArray(cliOutput)) {
+        // New format: array of events, find the one with type="result"
+        resultObj = cliOutput.find((item: any) => item.type === 'result')
+        if (!resultObj) {
+          return emptyResult('No result found in response')
+        }
+      } else {
+        // Old format: single object (backwards compatibility)
+        resultObj = cliOutput
+      }
+
       // Check for error response
-      if (cliOutput.type === 'error' || cliOutput.is_error === true) {
-        return emptyResult(cliOutput.error || 'Unknown error')
+      if (resultObj.type === 'error' || resultObj.is_error === true) {
+        return emptyResult(resultObj.error || 'Unknown error')
       }
 
       // Extract the "result" field (AI's response text)
-      const resultText = typeof cliOutput.result === 'string' ? cliOutput.result : ''
+      const resultText = typeof resultObj.result === 'string' ? resultObj.result : ''
 
       // Extract the full report (everything from === MANAGEMENT ACTIONS === onwards)
       const reportMatch = resultText.match(/(=== MANAGEMENT ACTIONS ===[\s\S]*)/)

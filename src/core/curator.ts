@@ -487,7 +487,8 @@ Focus ONLY on technical, architectural, debugging, decision, workflow, and proje
         ...process.env,
         MEMORY_CURATOR_ACTIVE: '1',  // Prevent recursive hook triggering
       },
-      stderr: 'pipe',  // Capture stderr too
+      stdout: 'pipe',
+      stderr: 'pipe',
     })
 
     // Capture both stdout and stderr
@@ -506,15 +507,28 @@ Focus ONLY on technical, architectural, debugging, decision, workflow, and proje
       // First, parse the CLI JSON wrapper
       const cliOutput = JSON.parse(stdout)
 
+      // Claude Code now returns an array of events - find the result object
+      let resultObj: any
+      if (Array.isArray(cliOutput)) {
+        // New format: array of events, find the one with type="result"
+        resultObj = cliOutput.find((item: any) => item.type === 'result')
+        if (!resultObj) {
+          return { session_summary: '', memories: [] }
+        }
+      } else {
+        // Old format: single object (backwards compatibility)
+        resultObj = cliOutput
+      }
+
       // Check for error response FIRST (like Python does)
-      if (cliOutput.type === 'error' || cliOutput.is_error === true) {
+      if (resultObj.type === 'error' || resultObj.is_error === true) {
         return { session_summary: '', memories: [] }
       }
 
       // Extract the "result" field (AI's response text)
       let aiResponse = ''
-      if (typeof cliOutput.result === 'string') {
-        aiResponse = cliOutput.result
+      if (typeof resultObj.result === 'string') {
+        aiResponse = resultObj.result
       } else {
         return { session_summary: '', memories: [] }
       }

@@ -261,3 +261,7 @@ bun test --watch            # Watch mode
 3. **Curation failing**: Ensure Claude CLI is installed and `claude --resume` works.
 
 4. **Stale embeddings**: Run `memory migrate` to regenerate embeddings for all memories.
+
+5. **Curator/Manager returning 0 memories**: Claude Code v2.0.76+ changed `--output-format json` from single object to array of events. Fixed in v0.3.9 - both formats now supported with backwards compatibility.
+
+6. **Testing local changes**: Make sure you're running local code (`bun src/cli/index.ts serve`) not the global npm package (`memory serve`).
