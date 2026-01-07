@@ -10,7 +10,7 @@ import type { CuratedMemory, CurationResult, CurationTrigger } from '../types/me
 
 /**
  * Get the correct Claude CLI command path
- * Matches Python's get_claude_command() logic
+ * Uses `which` for universal discovery across installation methods
  */
 function getClaudeCommand(): string {
   // 1. Check for explicit override
@@ -19,13 +19,19 @@ function getClaudeCommand(): string {
     return envCommand
   }
 
-  // 2. Check standard Claude Code installation path
+  // 2. Use `which` to find claude in PATH (universal - works with native, homebrew, npm, etc.)
+  const result = Bun.spawnSync(['which', 'claude'])
+  if (result.exitCode === 0) {
+    return result.stdout.toString().trim()
+  }
+
+  // 3. Legacy fallback - hardcoded native install path
   const claudeLocal = join(homedir(), '.claude', 'local', 'claude')
   if (existsSync(claudeLocal)) {
     return claudeLocal
   }
 
-  // 3. Fallback to PATH
+  // 4. Last resort - assume it's in PATH
   return 'claude'
 }
 

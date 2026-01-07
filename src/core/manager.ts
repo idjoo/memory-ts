@@ -11,15 +11,24 @@ import type { CurationResult } from '../types/memory.ts'
 
 /**
  * Get the Claude CLI command path
- * Same logic as curator.ts
+ * Uses `which` for universal discovery across installation methods
  */
 function getClaudeCommand(): string {
+  // 1. Check for explicit override
   const envCommand = process.env.CURATOR_COMMAND
   if (envCommand) return envCommand
 
+  // 2. Use `which` to find claude in PATH (universal - works with native, homebrew, npm, etc.)
+  const result = Bun.spawnSync(['which', 'claude'])
+  if (result.exitCode === 0) {
+    return result.stdout.toString().trim()
+  }
+
+  // 3. Legacy fallback - hardcoded native install path
   const claudeLocal = join(homedir(), '.claude', 'local', 'claude')
   if (existsSync(claudeLocal)) return claudeLocal
 
+  // 4. Last resort
   return 'claude'
 }
 

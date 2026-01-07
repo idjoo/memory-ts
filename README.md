@@ -336,6 +336,9 @@ This isn't just about remembering facts. It's about preserving:
 
 ## Changelog
 
+### v0.3.10
+- **Improvement**: Use `which claude` for universal CLI path discovery - works with any installation method (native, homebrew, npm)
+
 ### v0.3.9
 - **Fix**: Claude Code v2.0.76+ changed `--output-format json` from single object to array of events. Updated curator and manager to handle both formats with backwards compatibility.
 
