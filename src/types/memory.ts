@@ -54,11 +54,12 @@ export type CurationTrigger =
 
 /**
  * A memory curated by Claude with semantic understanding
- * v3 schema - consolidated metadata, strict context types
+ * v4 schema - two-tier structure (headline + expanded content)
  */
 export interface CuratedMemory {
-  // Core content
-  content: string                           // The memory content itself
+  // Core content (v4: two-tier structure)
+  headline: string                          // v4: 1-2 line summary, always shown in retrieval
+  content: string                           // v4: Full structured template (expand on demand)
   importance_weight: number                 // 0.0 to 1.0 (curator's assessment)
   semantic_tags: string[]                   // Concepts this relates to
   reasoning: string                         // Why Claude thinks this is important
@@ -89,10 +90,11 @@ export interface CuratedMemory {
 
 /**
  * A stored memory with database metadata
- * v3 schema - removed unused fields, consolidated metadata
+ * v4 schema - two-tier structure with backwards compatibility
  */
-export interface StoredMemory extends CuratedMemory {
+export interface StoredMemory extends Omit<CuratedMemory, 'headline'> {
   id: string                                // Unique identifier
+  headline?: string                         // v4: Optional for backwards compat (old memories don't have it)
   session_id: string                        // Session that created this memory
   project_id: string                        // Project this belongs to
   created_at: number                        // Timestamp (ms since epoch)
@@ -137,10 +139,10 @@ export interface StoredMemory extends CuratedMemory {
 }
 
 /**
- * Default values for v3 fields based on context_type
+ * Default values for v4 fields based on context_type
  * Uses only the 11 canonical context types
  */
-export const V3_DEFAULTS = {
+export const V4_DEFAULTS = {
   // Type-specific defaults (all 11 canonical types)
   typeDefaults: {
     personal: { scope: 'global', temporal_class: 'eternal', fade_rate: 0 },
@@ -169,38 +171,39 @@ export const V3_DEFAULTS = {
   },
 }
 
-// Backwards compatibility alias
-export const V2_DEFAULTS = V3_DEFAULTS
+// Backwards compatibility aliases
+export const V3_DEFAULTS = V4_DEFAULTS
+export const V2_DEFAULTS = V4_DEFAULTS
 
 /**
- * Apply v3 defaults to a memory
+ * Apply v4 defaults to a memory
  * Uses context_type to determine appropriate defaults
  */
-export function applyV3Defaults(memory: Partial<StoredMemory>): StoredMemory {
+export function applyV4Defaults(memory: Partial<StoredMemory>): StoredMemory {
   const contextType = (memory.context_type ?? 'technical') as ContextType
-  const typeDefaults = V3_DEFAULTS.typeDefaults[contextType] ?? V3_DEFAULTS.typeDefaults.technical
+  const typeDefaults = V4_DEFAULTS.typeDefaults[contextType] ?? V4_DEFAULTS.typeDefaults.technical
 
   return {
     // Spread existing memory
     ...memory,
 
     // Apply status default
-    status: memory.status ?? V3_DEFAULTS.fallback.status,
+    status: memory.status ?? V4_DEFAULTS.fallback.status,
 
     // Apply scope from type defaults
-    scope: memory.scope ?? typeDefaults?.scope ?? V3_DEFAULTS.fallback.scope,
+    scope: memory.scope ?? typeDefaults?.scope ?? V4_DEFAULTS.fallback.scope,
 
     // Apply temporal class from type defaults
-    temporal_class: memory.temporal_class ?? typeDefaults?.temporal_class ?? V3_DEFAULTS.fallback.temporal_class,
+    temporal_class: memory.temporal_class ?? typeDefaults?.temporal_class ?? V4_DEFAULTS.fallback.temporal_class,
 
     // Apply fade rate from type defaults
-    fade_rate: memory.fade_rate ?? typeDefaults?.fade_rate ?? V3_DEFAULTS.fallback.fade_rate,
+    fade_rate: memory.fade_rate ?? typeDefaults?.fade_rate ?? V4_DEFAULTS.fallback.fade_rate,
 
     // Apply other defaults
-    sessions_since_surfaced: memory.sessions_since_surfaced ?? V3_DEFAULTS.fallback.sessions_since_surfaced,
-    awaiting_implementation: memory.awaiting_implementation ?? V3_DEFAULTS.fallback.awaiting_implementation,
-    awaiting_decision: memory.awaiting_decision ?? V3_DEFAULTS.fallback.awaiting_decision,
-    exclude_from_retrieval: memory.exclude_from_retrieval ?? V3_DEFAULTS.fallback.exclude_from_retrieval,
+    sessions_since_surfaced: memory.sessions_since_surfaced ?? V4_DEFAULTS.fallback.sessions_since_surfaced,
+    awaiting_implementation: memory.awaiting_implementation ?? V4_DEFAULTS.fallback.awaiting_implementation,
+    awaiting_decision: memory.awaiting_decision ?? V4_DEFAULTS.fallback.awaiting_decision,
+    exclude_from_retrieval: memory.exclude_from_retrieval ?? V4_DEFAULTS.fallback.exclude_from_retrieval,
 
     // Initialize empty arrays if not present
     related_to: memory.related_to ?? [],
@@ -209,18 +212,27 @@ export function applyV3Defaults(memory: Partial<StoredMemory>): StoredMemory {
     related_files: memory.related_files ?? [],
 
     // Mark as current schema version
-    schema_version: memory.schema_version ?? 3,
+    schema_version: memory.schema_version ?? 4,
   } as StoredMemory
 }
 
-// Backwards compatibility alias
-export const applyV2Defaults = applyV3Defaults
+// Backwards compatibility aliases
+export const applyV3Defaults = applyV4Defaults
+export const applyV2Defaults = applyV4Defaults
 
 /**
- * Check if a memory needs migration to v3
+ * Check if a memory needs migration to latest schema
  */
 export function needsMigration(memory: Partial<StoredMemory>): boolean {
-  return !memory.schema_version || memory.schema_version < 3
+  return !memory.schema_version || memory.schema_version < 4
+}
+
+/**
+ * Check if a memory has expandable content (v4 feature)
+ * Old memories (v3 and below) don't have headline field
+ */
+export function hasExpandableContent(memory: StoredMemory): boolean {
+  return !!memory.headline && memory.headline.length > 0
 }
 
 /**

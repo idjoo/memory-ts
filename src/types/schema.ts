@@ -9,7 +9,7 @@ import type { SchemaDefinition } from '@rlabs-inc/fsdb'
  * Schema version for migration tracking
  * Increment this when adding new fields that require migration
  */
-export const MEMORY_SCHEMA_VERSION = 3
+export const MEMORY_SCHEMA_VERSION = 4
 
 /**
  * Memory storage schema
@@ -27,10 +27,15 @@ export const MEMORY_SCHEMA_VERSION = 3
  *     - retrieval_weight (retrieval uses importance_weight)
  *     - temporal_relevance (replaced by temporal_class)
  *     Also: context_type now strict enum (11 canonical values)
+ * v4: Two-tier memory structure for context efficiency:
+ *     - headline: 1-2 line summary (always shown in retrieval)
+ *     - content: full structured template (expand on demand)
+ *     - Auto-expand rules: action_required, awaiting_decision, 5+ signals
  */
 export const memorySchema = {
-  // ========== CORE CONTENT (v1) ==========
-  content: 'string',
+  // ========== CORE CONTENT (v4) ==========
+  headline: 'string',                     // v4: 1-2 line summary, always shown
+  content: 'string',                      // v4: Full structured template (expand on demand)
   reasoning: 'string',
 
   // ========== SCORES (v1) ==========

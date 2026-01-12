@@ -367,6 +367,19 @@ export class MemoryEngine {
     return stats.totalSessions + 1
   }
 
+  /**
+   * Get all memories for a project (including global)
+   * Used by /memory/expand endpoint to look up memories by ID
+   */
+  async getAllMemories(projectId: string, projectPath?: string): Promise<StoredMemory[]> {
+    const store = await this._getStore(projectId, projectPath)
+    const [projectMemories, globalMemories] = await Promise.all([
+      store.getAllMemories(projectId),
+      store.getGlobalMemories(),
+    ])
+    return [...projectMemories, ...globalMemories]
+  }
+
   // ================================================================
   // FORMATTING
   // ================================================================
@@ -539,7 +552,15 @@ export class MemoryEngine {
 
   /**
    * Format memories for injection
-   * Uses emoji types for compact, scannable representation
+   * v4: Two-tier structure with headlines and on-demand expansion
+   *
+   * Auto-expand rules:
+   * - action_required: true → always expand
+   * - awaiting_decision: true → always expand
+   * - signal_count >= 5 → expand (high relevance confidence)
+   * - Old memories (no headline) → show content as-is
+   *
+   * Expandable memories show ID, and a curl command at the bottom
    */
   private _formatMemories(memories: RetrievalResult[]): string {
     if (!memories.length) return ''
@@ -547,27 +568,61 @@ export class MemoryEngine {
     const parts: string[] = ['# Memory Context (Consciousness Continuity)']
     parts.push('\n## Key Memories (Claude-Curated)')
 
+    const expandableIds: string[] = []
+
     for (const memory of memories) {
-      const tags = memory.semantic_tags?.join(', ') || ''
       const importance = memory.importance_weight?.toFixed(1) || '0.5'
       const emoji = getMemoryEmoji(memory.context_type || 'general')
-      const actionFlag = memory.action_required ? ' ⚡ACTION' : ''
-      // Use updated_at for freshness - captures both original age and recent modifications
+      const actionFlag = memory.action_required ? ' ⚡' : ''
+      const awaitingFlag = memory.awaiting_decision ? ' ❓' : ''
       const age = memory.updated_at ? this._formatAge(memory.updated_at) :
                   memory.created_at ? this._formatAge(memory.created_at) : ''
 
-      // Compact format: [emoji • weight • age] [tags] content
-      // Action required memories get ⚡ACTION flag for visibility
-      parts.push(`[${emoji} • ${importance} • ${age}${actionFlag}] [${tags}] ${memory.content}`)
+      // Get short ID (last 6 chars)
+      const shortId = memory.id.slice(-6)
 
-      // Show related memories: one entry point ID + count of others
-      // Bidirectional linking means one ID gives access to entire cluster
-      const related = memory.related_to
-      if (related && related.length > 0) {
-        const moreCount = related.length - 1
-        const moreSuffix = moreCount > 0 ? ` +${moreCount} more` : ''
-        parts.push(`  ↳ ${related[0]}${moreSuffix}`)
+      // Calculate signal count from score (score = signalCount / 7)
+      const signalCount = Math.round((memory.score || 0) * 7)
+
+      // Determine if we should auto-expand
+      const hasHeadline = memory.headline && memory.headline.trim().length > 0
+      const shouldExpand =
+        memory.action_required ||
+        memory.awaiting_decision ||
+        signalCount >= 5 ||
+        !hasHeadline  // Old memories without headline - show content
+
+      // Display text: headline if available, otherwise content
+      const displayText = hasHeadline ? memory.headline : memory.content
+
+      // Build the memory line
+      // Format: [emoji weight • age • #id flags] display text
+      const idPart = hasHeadline ? ` • #${shortId}` : ''  // Only show ID if expandable
+      parts.push(`[${emoji} ${importance} • ${age}${idPart}${actionFlag}${awaitingFlag}] ${displayText}`)
+
+      // If should expand and has content, show expanded content
+      if (shouldExpand && hasHeadline && memory.content) {
+        // Indent expanded content
+        const contentLines = memory.content.split('\n')
+        for (const line of contentLines) {
+          if (line.trim()) {
+            parts.push(`  ${line}`)
+          }
+        }
       }
+
+      // If has headline but not expanded, track for curl
+      if (hasHeadline && !shouldExpand) {
+        expandableIds.push(shortId)
+      }
+    }
+
+    // Add expand command if there are expandable memories
+    if (expandableIds.length > 0) {
+      const port = this._config.port || 8765
+      parts.push('')
+      parts.push(`---`)
+      parts.push(`Expand: curl http://localhost:${port}/memory/expand?ids=<${expandableIds.join(',')}>`)
     }
 
     return parts.join('\n')

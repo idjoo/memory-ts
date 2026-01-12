@@ -172,6 +172,7 @@ export class MemoryStore {
 
     return memories.all().map(record => ({
       id: record.id,
+      headline: record.headline ?? '',  // v4: may be empty for old memories
       content: record.content,
       reasoning: record.reasoning,
       importance_weight: record.importance_weight,
@@ -209,8 +210,9 @@ export class MemoryStore {
     const typeDefaults = V2_DEFAULTS.typeDefaults[contextType] ?? V2_DEFAULTS.typeDefaults.personal
 
     const id = memories.insert({
-      // Core fields
-      content: memory.content,
+      // Core fields (v4: headline + content)
+      headline: memory.headline ?? '',  // v4: 1-2 line summary
+      content: memory.content,           // v4: Full structured template
       reasoning: memory.reasoning,
       importance_weight: memory.importance_weight,
       confidence_score: memory.confidence_score,
@@ -484,8 +486,9 @@ export class MemoryStore {
     const typeDefaults = V2_DEFAULTS.typeDefaults[contextType] ?? V2_DEFAULTS.typeDefaults.technical
 
     const id = memories.insert({
-      // Core fields
-      content: memory.content,
+      // Core fields (v4: headline + content)
+      headline: memory.headline ?? '',  // v4: 1-2 line summary
+      content: memory.content,           // v4: Full structured template
       reasoning: memory.reasoning,
       importance_weight: memory.importance_weight,
       confidence_score: memory.confidence_score,
@@ -539,6 +542,7 @@ export class MemoryStore {
 
     return memories.all().map(record => ({
       id: record.id,
+      headline: record.headline ?? '',  // v4: may be empty for old memories
       content: record.content,
       reasoning: record.reasoning,
       importance_weight: record.importance_weight,

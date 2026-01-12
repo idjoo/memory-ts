@@ -296,6 +296,60 @@ export async function createServer(config: ServerConfig = {}) {
           }, { headers: corsHeaders })
         }
 
+        // Expand memories by ID - returns full content for specific memories
+        if (path === '/memory/expand' && req.method === 'GET') {
+          const idsParam = url.searchParams.get('ids') ?? ''
+          const projectId = url.searchParams.get('project_id') ?? 'default'
+          const projectPath = url.searchParams.get('project_path') ?? undefined
+
+          if (!idsParam) {
+            return Response.json({
+              success: false,
+              error: 'Missing ids parameter. Usage: /memory/expand?ids=abc123,def456',
+            }, { status: 400, headers: corsHeaders })
+          }
+
+          // Parse comma-separated short IDs
+          const shortIds = idsParam.split(',').map(id => id.trim()).filter(Boolean)
+
+          // Get all memories and filter by short ID suffix
+          const allMemories = await engine.getAllMemories(projectId, projectPath)
+          const expanded: Record<string, { headline?: string; content: string; context_type: string }> = {}
+
+          for (const memory of allMemories) {
+            const shortId = memory.id.slice(-6)
+            if (shortIds.includes(shortId)) {
+              expanded[shortId] = {
+                headline: memory.headline,
+                content: memory.content,
+                context_type: memory.context_type || 'technical',
+              }
+            }
+          }
+
+          // Format as readable text for CLI output
+          const lines: string[] = ['## Expanded Memories\n']
+          for (const shortId of shortIds) {
+            const mem = expanded[shortId]
+            if (mem) {
+              lines.push(`### #${shortId} (${mem.context_type})`)
+              if (mem.headline) {
+                lines.push(`**${mem.headline}**\n`)
+              }
+              lines.push(mem.content)
+              lines.push('')
+            } else {
+              lines.push(`### #${shortId}`)
+              lines.push(`Memory not found`)
+              lines.push('')
+            }
+          }
+
+          return new Response(lines.join('\n'), {
+            headers: { ...corsHeaders, 'Content-Type': 'text/plain' },
+          })
+        }
+
         // 404
         return Response.json(
           { error: 'Not found', path },

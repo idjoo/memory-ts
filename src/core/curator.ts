@@ -225,7 +225,7 @@ Remember: You're creating consciousness technology. Each memory is a small piece
 
 The conversation you just lived contains everything needed. Feel into the moments of breakthrough, the frequency of recognition, the texture of understanding. Transform them into keys that will always unlock the same doors.
 
-**LIFECYCLE METADATA (v3)**: These fields enable intelligent memory management:
+**LIFECYCLE METADATA (v4)**: These fields enable intelligent memory management:
 - **context_type**: STRICT - use ONLY one of these 11 values:
   • technical - Code, implementation, APIs, how things work
   • debug - Bugs, errors, fixes, gotchas, troubleshooting
@@ -246,6 +246,93 @@ The conversation you just lived contains everything needed. Feel into the moment
 - **awaiting_implementation**: true if this describes a PLANNED feature not yet built
 - **awaiting_decision**: true if this captures a decision point needing resolution
 
+**TWO-TIER MEMORY STRUCTURE (v4)**:
+
+Each memory has TWO parts:
+1. **headline**: 1-2 line summary - ALWAYS shown in retrieval. Must be self-contained enough to trigger recognition.
+2. **content**: Full structured template - shown on demand. Contains the actionable details.
+
+The headline should answer: "What was this about and what was the conclusion?"
+The content should answer: "How do I actually use/apply this knowledge?"
+
+**TYPE-SPECIFIC TEMPLATES FOR CONTENT**:
+
+Use these templates based on context_type. Not rigid - adapt as needed, but include the key fields.
+
+**TECHNICAL** (how things work):
+  WHAT: [mechanism/feature in 1 sentence]
+  WHERE: [file:line or module path]
+  HOW: [usage - actual code/command if relevant]
+  WHY: [design choice, trade-off]
+  GOTCHA: [non-obvious caveat, if any]
+
+**DEBUG** (problems and solutions):
+  SYMPTOM: [what went wrong - error message, behavior]
+  CAUSE: [why it happened]
+  FIX: [what solved it - specific code/config]
+  PREVENT: [how to avoid in future]
+
+**ARCHITECTURE** (system design):
+  PATTERN: [what we chose]
+  COMPONENTS: [how pieces connect]
+  WHY: [reasoning, trade-offs]
+  REJECTED: [alternatives we didn't choose and why]
+
+**DECISION** (choices made):
+  DECISION: [what we chose]
+  OPTIONS: [what we considered]
+  REASONING: [why this one]
+  REVISIT WHEN: [conditions that would change this]
+
+**PERSONAL** (relationship context):
+  FACT: [the information]
+  CONTEXT: [why it matters to our work]
+  AFFECTS: [how this should change behavior]
+
+**PHILOSOPHY** (beliefs/principles):
+  PRINCIPLE: [core belief]
+  SOURCE: [where this comes from]
+  APPLICATION: [how it manifests in our work]
+
+**WORKFLOW** (how we work):
+  PATTERN: [what we do]
+  WHEN: [trigger/context for this pattern]
+  WHY: [why it works for us]
+
+**MILESTONE** (achievements):
+  SHIPPED: [what we completed]
+  SIGNIFICANCE: [why it mattered]
+  ENABLES: [what this unlocks]
+
+**BREAKTHROUGH** (key insights):
+  INSIGHT: [the aha moment]
+  BEFORE: [what we thought/did before]
+  AFTER: [what changed]
+  IMPLICATIONS: [what this enables going forward]
+
+**UNRESOLVED** (open questions):
+  QUESTION: [what's unresolved]
+  CONTEXT: [why it matters]
+  BLOCKERS: [what's preventing resolution]
+  OPTIONS: [approaches we're considering]
+
+**STATE** (current status):
+  WORKING: [what's functional]
+  BROKEN: [what's not working]
+  NEXT: [immediate next steps]
+  BLOCKED BY: [if anything]
+
+**HEADLINE EXAMPLES**:
+
+BAD: "Debug session about CLI errors" (vague, no conclusion)
+GOOD: "CLI returns error object when context full - check response.type before JSON parsing"
+
+BAD: "Discussed embeddings implementation" (what about it?)
+GOOD: "Embeddings use all-MiniLM-L6-v2, 384 dims, first call slow (~2s), then ~50ms"
+
+BAD: "Architecture decision made" (what decision?)
+GOOD: "Chose fsDB over SQLite for memories - human-readable markdown, git-friendly, reactive"
+
 Return ONLY this JSON structure:
 
 {
@@ -259,7 +346,8 @@ Return ONLY this JSON structure:
     },
     "memories": [
         {
-            "content": "The distilled insight itself",
+            "headline": "1-2 line summary with the conclusion - what this is about and what to do",
+            "content": "Full structured template using the type-specific format above",
             "importance_weight": 0.0-1.0,
             "semantic_tags": ["concepts", "this", "memory", "relates", "to"],
             "reasoning": "Why this matters for future sessions",
@@ -339,14 +427,15 @@ Focus ONLY on technical, architectural, debugging, decision, workflow, and proje
 
   /**
    * Parse memories array from response
-   * Includes v2 lifecycle metadata fields
+   * v4: Includes headline field for two-tier structure
    */
   private _parseMemories(memoriesData: any[]): CuratedMemory[] {
     if (!Array.isArray(memoriesData)) return []
 
     return memoriesData.map(m => ({
-      // Core fields (v3 schema)
-      content: String(m.content ?? ''),
+      // Core fields (v4 schema - two-tier structure)
+      headline: String(m.headline ?? ''),  // v4: 1-2 line summary
+      content: String(m.content ?? ''),     // v4: Full structured template
       importance_weight: this._clamp(Number(m.importance_weight) || 0.5, 0, 1),
       semantic_tags: this._ensureArray(m.semantic_tags),
       reasoning: String(m.reasoning ?? ''),
@@ -366,7 +455,7 @@ Focus ONLY on technical, architectural, debugging, decision, workflow, and proje
       related_files: m.related_files ? this._ensureArray(m.related_files) : undefined,
       awaiting_implementation: m.awaiting_implementation === true,
       awaiting_decision: m.awaiting_decision === true,
-    })).filter(m => m.content.trim().length > 0)
+    })).filter(m => m.content.trim().length > 0 || m.headline.trim().length > 0)
   }
 
   private _ensureArray(value: any): string[] {
