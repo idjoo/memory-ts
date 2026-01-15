@@ -24,6 +24,7 @@ ${c.bold('Commands:')}
   ${c.command('serve')}      Start the memory server ${c.muted('(default)')}
   ${c.command('stats')}      Show memory statistics
   ${c.command('install')}    Set up hooks ${c.muted('(--claude or --gemini)')}
+  ${c.command('hooks')}      Hook handlers ${c.muted('(session-start, user-prompt, curation)')}
   ${c.command('ingest')}     Ingest historical sessions into memory ${c.muted('(--session, --project, or --all)')}
   ${c.command('migrate')}    Upgrade memories to latest schema version
   ${c.command('doctor')}     Check system health
@@ -138,6 +139,13 @@ async function main() {
     case 'check': {
       const { doctor } = await import('./commands/doctor.ts')
       await doctor(values)
+      break
+    }
+
+    case 'hooks': {
+      const { hooks } = await import('./commands/hooks.ts')
+      const hookType = positionals[1] // e.g., 'session-start', 'user-prompt', 'curation'
+      await hooks(hookType, values)
       break
     }
 
