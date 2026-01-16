@@ -383,6 +383,21 @@ This isn't just about remembering facts. It's about preserving:
 
 ## Changelog
 
+### v0.4.10
+- **Fix**: Server now actually uses SDK curation (v0.4.9 published before the change was in server code)
+
+### v0.4.9
+- **Feature**: SDK curation is now the default mode for curator and manager
+- **Feature**: Hooks now install to `~/.claude/hooks/` for stability across package upgrades
+- **Fix**: CLI mode without max-turns was going off-rails and not returning JSON structure
+
+### v0.4.6
+- **Fix**: Removed curator max-turns limit - Claude Code 2.1.7+ uses Haiku for routing before Opus, consuming turns
+
+### v0.4.5
+- **Feature**: Verbose curator logging (`--verbose`) to debug empty memory extractions
+- **Fix**: Ingest storage path resolution
+
 ### v0.4.4
 - **Docs**: Comprehensive README update with accurate v0.4.x documentation
 - **Fix**: CLI `--version` now reads from package.json instead of hardcoded value
