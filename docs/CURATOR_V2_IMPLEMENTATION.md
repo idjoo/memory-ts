@@ -311,20 +311,24 @@ Zod is required for:
 
 ## Implementation Status
 
-**IMPLEMENTED** in v0.4.11 (Session 29, January 17, 2026)
+**IMPLEMENTED** in v0.4.11, **SIMPLIFIED** in v0.4.12
+
+### v0.4.12 Simplification
+Removed Zod structured outputs - they added complexity without benefit since SDK returns JSON as text anyway. Now uses session resumption + existing battle-tested JSON parser.
 
 ### Files Changed
-- `src/types/curation-schema.ts` - **NEW** - Zod schemas for structured outputs
-- `src/core/curator.ts` - Added `curateWithSessionResume()` method
+- `src/core/curator.ts` - Simplified `curateWithSessionResume()` - session resume + existing parser
 - `src/server/index.ts` - Try session resume first, fallback to transcript parsing
+- `src/types/curation-schema.ts` - **DELETED** - Zod schemas removed
+- Removed `zod` dependency from package.json
 
 ### Curation Flow
 ```
 Checkpoint Request
        ↓
-curateWithSessionResume()  ← Session resume + structured outputs (Opus 4.5)
+curateWithSessionResume()  ← Session resume + existing parser (Opus 4.5)
        ↓ (if empty)
-curateFromSessionFile()    ← Parse transcript + SDK curation (no CLI)
+curateFromSessionFile()    ← Parse transcript + SDK curation (fallback)
        ↓
 storeCurationResult()
        ↓
