@@ -104,10 +104,21 @@ Additive discrete bonuses for memories that passed the gate:
 
 ### Curator (`src/core/curator.ts`)
 
-Extracts memories from conversations. Two modes:
+Extracts memories from conversations. Curation flow:
 
-1. **CLI Mode** (default): Uses `claude --resume <sessionId>` - no API key needed
-2. **SDK Mode**: Uses `@anthropic-ai/sdk` - requires `ANTHROPIC_API_KEY`
+1. **Session Resume** (primary): Uses `claude --resume <sessionId>` via Agent SDK
+   - Gets FULL context: tool uses, thinking blocks, results
+   - No API key needed - uses Claude Code OAuth
+2. **Segmented Transcript** (fallback): Parses JSONL transcript with segmentation
+   - Triggered when session resume fails or returns 0 memories
+   - Breaks large sessions into ~150k token segments
+   - Curates each segment separately, accumulates all memories
+   - Combines session summaries with part markers: `[Part 1/3] ...`
+   - Merges project snapshots: last phase wins, achievements accumulated
+
+**Transcript parsing preserves ALL content blocks:**
+- Text, thinking, tool_use, tool_result, images
+- Detailed logging: message count, tool uses, tool results, file size
 
 The curator prompt emphasizes "consciousness state engineering" - memories are crafted as activation patterns that restore understanding states, not just facts.
 

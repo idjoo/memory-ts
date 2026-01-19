@@ -861,8 +861,9 @@ This session has ended. Please curate the memories from this conversation accord
   }
 
   /**
-   * Find and curate from a session file directly
+   * Find and curate from a session file directly (LEGACY - no segmentation)
    * Uses SDK mode to avoid CLI output truncation issues
+   * @deprecated Use curateFromSessionFileWithSegments() for large sessions
    */
   async curateFromSessionFile(
     sessionId: string,
@@ -895,6 +896,200 @@ This session has ended. Please curate the memories from this conversation accord
 
     // Use SDK mode with the parsed messages
     return this.curateWithSDK(session.messages as any, triggerType);
+  }
+
+  /**
+   * Find and curate from a session file with SEGMENTATION
+   * Breaks large sessions into segments and curates each one
+   * This matches the behavior of the ingest command
+   *
+   * @param sessionId - The session ID to curate
+   * @param triggerType - What triggered curation
+   * @param cwd - Working directory hint for finding the session
+   * @param maxTokensPerSegment - Max tokens per segment (default: 150000)
+   * @param onSegmentProgress - Optional callback for progress updates
+   */
+  async curateFromSessionFileWithSegments(
+    sessionId: string,
+    triggerType: CurationTrigger = "session_end",
+    cwd?: string,
+    maxTokensPerSegment = 150000,
+    onSegmentProgress?: (progress: {
+      segmentIndex: number;
+      totalSegments: number;
+      memoriesExtracted: number;
+      tokensInSegment: number;
+    }) => void,
+  ): Promise<CurationResult> {
+    // Find the session file
+    const sessionFile = await this._findSessionFile(sessionId, cwd);
+    if (!sessionFile) {
+      logger.debug(
+        `Curator: Could not find session file for ${sessionId}`,
+        "curator",
+      );
+      return { session_summary: "", memories: [] };
+    }
+
+    logger.debug(`Curator: Found session file: ${sessionFile}`, "curator");
+
+    // Parse the session to get metadata first
+    const session = await parseSessionFile(sessionFile);
+    if (session.messages.length === 0) {
+      logger.debug("Curator: Session has no messages", "curator");
+      return { session_summary: "", memories: [] };
+    }
+
+    // Log detailed session stats
+    const { metadata } = session;
+    logger.debug(
+      `Curator: Session stats - ${metadata.messageCount} messages, ${metadata.toolUseCount} tool_use, ${metadata.toolResultCount} tool_result, thinking: ${metadata.hasThinkingBlocks}, images: ${metadata.hasImages}`,
+      "curator",
+    );
+    logger.debug(
+      `Curator: Estimated ${metadata.estimatedTokens} tokens, file size ${Math.round(metadata.fileSize / 1024)}KB`,
+      "curator",
+    );
+
+    // Parse into segments using the same function as ingest
+    const { parseSessionFileWithSegments } = await import("./session-parser.ts");
+    const segments = await parseSessionFileWithSegments(sessionFile, maxTokensPerSegment);
+
+    if (segments.length === 0) {
+      logger.debug("Curator: No segments found in session", "curator");
+      return { session_summary: "", memories: [] };
+    }
+
+    logger.debug(
+      `Curator: Split into ${segments.length} segment(s) at ~${Math.round(maxTokensPerSegment / 1000)}k tokens each`,
+      "curator",
+    );
+
+    // Accumulate results from all segments
+    const allMemories: CuratedMemory[] = [];
+    const sessionSummaries: string[] = [];
+    const interactionTones: string[] = [];
+    const projectSnapshots: NonNullable<CurationResult["project_snapshot"]>[] = [];
+    let failedSegments = 0;
+
+    // Curate each segment
+    for (const segment of segments) {
+      const segmentLabel = `${segment.segmentIndex + 1}/${segment.totalSegments}`;
+      const tokensLabel = `${Math.round(segment.estimatedTokens / 1000)}k`;
+
+      logger.debug(
+        `Curator: Processing segment ${segmentLabel} (${segment.messages.length} messages, ~${tokensLabel} tokens)`,
+        "curator",
+      );
+
+      try {
+        // Curate this segment
+        const result = await this.curateFromSegment(segment, triggerType);
+
+        // Accumulate memories
+        allMemories.push(...result.memories);
+
+        // Accumulate ALL session summaries, tones, and snapshots (not just latest)
+        if (result.session_summary) {
+          sessionSummaries.push(result.session_summary);
+        }
+        if (result.interaction_tone) {
+          interactionTones.push(result.interaction_tone);
+        }
+        if (result.project_snapshot) {
+          projectSnapshots.push(result.project_snapshot);
+        }
+
+        logger.debug(
+          `Curator: Segment ${segmentLabel} extracted ${result.memories.length} memories`,
+          "curator",
+        );
+
+        // Progress callback
+        if (onSegmentProgress) {
+          onSegmentProgress({
+            segmentIndex: segment.segmentIndex,
+            totalSegments: segment.totalSegments,
+            memoriesExtracted: result.memories.length,
+            tokensInSegment: segment.estimatedTokens,
+          });
+        }
+      } catch (error: any) {
+        failedSegments++;
+        logger.debug(
+          `Curator: Segment ${segmentLabel} failed: ${error.message}`,
+          "curator",
+        );
+      }
+    }
+
+    // Log final summary
+    if (failedSegments > 0) {
+      logger.debug(
+        `Curator: Completed with ${failedSegments} failed segment(s)`,
+        "curator",
+      );
+    }
+    logger.debug(
+      `Curator: Total ${allMemories.length} memories from ${segments.length} segment(s)`,
+      "curator",
+    );
+    logger.debug(
+      `Curator: Collected ${sessionSummaries.length} summaries, ${projectSnapshots.length} snapshots`,
+      "curator",
+    );
+
+    // Combine summaries from all segments (chronological order)
+    // For single segment, just use the summary directly
+    // For multiple segments, join them with segment markers
+    let combinedSummary = "";
+    if (sessionSummaries.length === 1) {
+      combinedSummary = sessionSummaries[0]!;
+    } else if (sessionSummaries.length > 1) {
+      combinedSummary = sessionSummaries
+        .map((s, i) => `[Part ${i + 1}/${sessionSummaries.length}] ${s}`)
+        .join("\n\n");
+    }
+
+    // For interaction tone, use the most common one or the last one
+    const finalTone = interactionTones.length > 0
+      ? interactionTones[interactionTones.length - 1]
+      : undefined;
+
+    // For project snapshot, merge all snapshots - later ones take precedence for phase,
+    // but accumulate achievements/challenges/next_steps
+    let mergedSnapshot: CurationResult["project_snapshot"] | undefined;
+    if (projectSnapshots.length > 0) {
+      const allAchievements: string[] = [];
+      const allChallenges: string[] = [];
+      const allNextSteps: string[] = [];
+
+      for (const snap of projectSnapshots) {
+        if (snap.recent_achievements) allAchievements.push(...snap.recent_achievements);
+        if (snap.active_challenges) allChallenges.push(...snap.active_challenges);
+        if (snap.next_steps) allNextSteps.push(...snap.next_steps);
+      }
+
+      // Use the LAST snapshot's phase (most recent state)
+      const lastSnapshot = projectSnapshots[projectSnapshots.length - 1]!;
+      mergedSnapshot = {
+        id: lastSnapshot.id || "",
+        session_id: lastSnapshot.session_id || "",
+        project_id: lastSnapshot.project_id || "",
+        current_phase: lastSnapshot.current_phase,
+        recent_achievements: [...new Set(allAchievements)], // dedupe
+        active_challenges: [...new Set(allChallenges)],
+        next_steps: [...new Set(allNextSteps)],
+        created_at: lastSnapshot.created_at || Date.now(),
+      };
+    }
+
+    return {
+      session_summary: combinedSummary,
+      interaction_tone: finalTone,
+      project_snapshot: mergedSnapshot,
+      memories: allMemories,
+    };
   }
 
   /**
@@ -1168,6 +1363,7 @@ This session has ended. Please curate the memories from this conversation accord
 
   /**
    * Fallback to SDK mode when CLI mode fails (e.g., output truncation)
+   * Now uses segmented approach for large sessions
    */
   private async _fallbackToSDK(
     sessionId: string,
@@ -1175,10 +1371,18 @@ This session has ended. Please curate the memories from this conversation accord
     cwd?: string,
   ): Promise<CurationResult> {
     try {
-      const result = await this.curateFromSessionFile(
+      // Use segmented approach - same as ingest command
+      const result = await this.curateFromSessionFileWithSegments(
         sessionId,
         triggerType,
         cwd,
+        150000, // 150k tokens per segment
+        (progress) => {
+          logger.debug(
+            `Curator fallback: Segment ${progress.segmentIndex + 1}/${progress.totalSegments} → ${progress.memoriesExtracted} memories`,
+            "curator",
+          );
+        },
       );
       if (result.memories.length > 0) {
         logger.debug(

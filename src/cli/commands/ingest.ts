@@ -303,11 +303,11 @@ export async function ingest(options: IngestOptions) {
       const segments = await parseSessionFileWithSegments(session.filepath, maxTokens)
       totalSegments += segments.length
 
-      // Accumulate all memories from this session for manager
+      // Accumulate all results from this session for manager
       const sessionMemories: CuratedMemory[] = []
-      let sessionSummary = ''
-      let interactionTone = ''
-      let projectSnapshot: CurationResult['project_snapshot'] = undefined
+      const sessionSummaries: string[] = []
+      const interactionTones: string[] = []
+      const projectSnapshots: NonNullable<CurationResult['project_snapshot']>[] = []
 
       const spinner = new Spinner()
 
@@ -332,15 +332,15 @@ export async function ingest(options: IngestOptions) {
             totalMemories++
           }
 
-          // Keep the most recent session summary, tone, and snapshot
+          // Accumulate ALL session summaries, tones, and snapshots (not just latest)
           if (result.session_summary) {
-            sessionSummary = result.session_summary
+            sessionSummaries.push(result.session_summary)
           }
           if (result.interaction_tone) {
-            interactionTone = result.interaction_tone
+            interactionTones.push(result.interaction_tone)
           }
           if (result.project_snapshot) {
-            projectSnapshot = result.project_snapshot
+            projectSnapshots.push(result.project_snapshot)
           }
         } catch (error: any) {
           failedSegments++
@@ -348,17 +348,59 @@ export async function ingest(options: IngestOptions) {
         }
       }
 
-      // Store session summary and project snapshot
-      if (sessionSummary) {
-        await store.storeSessionSummary(project.folderId, session.id, sessionSummary, interactionTone)
-        if (options.verbose) {
-          console.log(`        ${style('dim', `Summary stored: ${sessionSummary.slice(0, 60)}...`)}`)
+      // Combine summaries from all segments (chronological order)
+      let combinedSummary = ''
+      if (sessionSummaries.length === 1) {
+        combinedSummary = sessionSummaries[0]!
+      } else if (sessionSummaries.length > 1) {
+        combinedSummary = sessionSummaries
+          .map((s, i) => `[Part ${i + 1}/${sessionSummaries.length}] ${s}`)
+          .join('\n\n')
+      }
+
+      // For interaction tone, use the last one (most recent)
+      const finalTone = interactionTones.length > 0
+        ? interactionTones[interactionTones.length - 1]!
+        : ''
+
+      // For project snapshot, merge all - later ones take precedence for phase
+      let mergedSnapshot: CurationResult['project_snapshot'] | undefined
+      if (projectSnapshots.length > 0) {
+        const allAchievements: string[] = []
+        const allChallenges: string[] = []
+        const allNextSteps: string[] = []
+
+        for (const snap of projectSnapshots) {
+          if (snap.recent_achievements) allAchievements.push(...snap.recent_achievements)
+          if (snap.active_challenges) allChallenges.push(...snap.active_challenges)
+          if (snap.next_steps) allNextSteps.push(...snap.next_steps)
+        }
+
+        const lastSnapshot = projectSnapshots[projectSnapshots.length - 1]!
+        mergedSnapshot = {
+          id: lastSnapshot.id || '',
+          session_id: lastSnapshot.session_id || '',
+          project_id: lastSnapshot.project_id || '',
+          current_phase: lastSnapshot.current_phase,
+          recent_achievements: [...new Set(allAchievements)],
+          active_challenges: [...new Set(allChallenges)],
+          next_steps: [...new Set(allNextSteps)],
+          created_at: lastSnapshot.created_at || Date.now(),
         }
       }
-      if (projectSnapshot) {
-        await store.storeProjectSnapshot(project.folderId, session.id, projectSnapshot)
+
+      // Store session summary and project snapshot
+      if (combinedSummary) {
+        await store.storeSessionSummary(project.folderId, session.id, combinedSummary, finalTone)
         if (options.verbose) {
-          console.log(`        ${style('dim', `Snapshot stored: phase=${projectSnapshot.current_phase || 'none'}`)}`)
+          const preview = combinedSummary.length > 60 ? combinedSummary.slice(0, 57) + '...' : combinedSummary
+          console.log(`        ${style('dim', `Summary stored (${sessionSummaries.length} parts): ${preview}`)}`)
+        }
+      }
+      if (mergedSnapshot) {
+        await store.storeProjectSnapshot(project.folderId, session.id, mergedSnapshot)
+        if (options.verbose) {
+          console.log(`        ${style('dim', `Snapshot stored: phase=${mergedSnapshot.current_phase || 'none'}, ${mergedSnapshot.recent_achievements?.length || 0} achievements`)}`)
         }
       }
 
@@ -368,12 +410,12 @@ export async function ingest(options: IngestOptions) {
           // Start spinner for manager
           spinner.start(`Managing ${sessionMemories.length} memories - organizing with Opus 4.5...`)
 
-          // Build curation result for manager
+          // Build curation result for manager (using combined/merged values)
           const curationResult: CurationResult = {
             memories: sessionMemories,
-            session_summary: sessionSummary,
-            interaction_tone: interactionTone,
-            project_snapshot: projectSnapshot,
+            session_summary: combinedSummary,
+            interaction_tone: finalTone,
+            project_snapshot: mergedSnapshot,
           }
 
           const managerResult = await manager.manageWithSDK(

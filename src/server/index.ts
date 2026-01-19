@@ -198,19 +198,27 @@ export async function createServer(config: ServerConfig = {}) {
           setImmediate(async () => {
             try {
               // Try session resume first (v2) - gets full context including tool uses
-              // Falls back to transcript parsing if resume fails
+              // Falls back to segmented transcript parsing if resume fails
               let result = await curator.curateWithSessionResume(
                 body.claude_session_id,
                 body.trigger
               )
 
-              // Fallback to transcript-based curation if resume returned nothing
+              // Fallback to transcript-based curation WITH SEGMENTATION if resume returned nothing
+              // This matches the ingest command behavior - breaks large sessions into segments
               if (result.memories.length === 0) {
-                logger.debug('Session resume returned no memories, falling back to transcript parsing', 'server')
-                result = await curator.curateFromSessionFile(
+                logger.debug('Session resume returned no memories, falling back to segmented transcript parsing', 'server')
+                result = await curator.curateFromSessionFileWithSegments(
                   body.claude_session_id,
                   body.trigger,
-                  body.cwd
+                  body.cwd,
+                  150000, // 150k tokens per segment
+                  (progress) => {
+                    logger.debug(
+                      `Curation segment ${progress.segmentIndex + 1}/${progress.totalSegments}: ${progress.memoriesExtracted} memories (~${Math.round(progress.tokensInSegment / 1000)}k tokens)`,
+                      'server'
+                    )
+                  }
                 )
               }
 
