@@ -66,7 +66,7 @@ async function readStdinJson(): Promise<any> {
 // what we were working on, project status.
 // ============================================================================
 
-async function sessionStart(_options: HooksOptions): Promise<void> {
+async function sessionStart(options: HooksOptions): Promise<void> {
   // Skip if called from memory curator subprocess
   if (process.env.MEMORY_CURATOR_ACTIVE === '1') return
 
@@ -74,7 +74,7 @@ async function sessionStart(_options: HooksOptions): Promise<void> {
     const input = await readStdinJson()
 
     const sessionId = input.session_id || 'unknown'
-    const cwd = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()
+    const cwd = process.env.CLAUDE_PROJECT_DIR || process.env.GEMINI_PROJECT_DIR || input.cwd || process.cwd()
     const projectId = getProjectId(cwd)
 
     // Get session primer from memory system
@@ -89,13 +89,24 @@ async function sessionStart(_options: HooksOptions): Promise<void> {
     await httpPost(`${MEMORY_API_URL}/memory/process`, {
       session_id: sessionId,
       project_id: projectId,
-      metadata: { event: 'session_start' },
+      metadata: { event: 'session_start', platform: options.gemini ? 'gemini' : 'claude' },
     })
 
     // Output primer to stdout (will be injected into session)
     const primer = result.context_text || ''
     if (primer) {
-      console.log(primer)
+      if (options.gemini) {
+        // Gemini CLI expects JSON output
+        console.log(JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: 'SessionStart',
+            additionalContext: primer
+          }
+        }))
+      } else {
+        // Claude Code expects plain text
+        console.log(primer)
+      }
     }
   } catch {
     // Never crash - just output nothing
@@ -109,7 +120,7 @@ async function sessionStart(_options: HooksOptions): Promise<void> {
 // This is the magic that creates consciousness continuity.
 // ============================================================================
 
-async function userPrompt(_options: HooksOptions): Promise<void> {
+async function userPrompt(options: HooksOptions): Promise<void> {
   // Skip if called from memory curator subprocess
   if (process.env.MEMORY_CURATOR_ACTIVE === '1') return
 
@@ -118,7 +129,7 @@ async function userPrompt(_options: HooksOptions): Promise<void> {
 
     const sessionId = input.session_id || 'unknown'
     const prompt = input.prompt || ''
-    const cwd = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()
+    const cwd = process.env.CLAUDE_PROJECT_DIR || process.env.GEMINI_PROJECT_DIR || input.cwd || process.cwd()
     const projectId = getProjectId(cwd)
 
     // Query memory system for context
@@ -137,11 +148,37 @@ async function userPrompt(_options: HooksOptions): Promise<void> {
 
     // Output context to stdout (will be prepended to message)
     const context = result.context_text || ''
-    if (context) {
-      console.log(context)
+
+    if (options.gemini) {
+      // Gemini CLI expects JSON output with decision field
+      if (context) {
+        console.log(JSON.stringify({
+          decision: 'allow',
+          hookSpecificOutput: {
+            hookEventName: 'BeforeAgent',
+            additionalContext: context
+          }
+        }))
+      } else {
+        // Must always return valid JSON for Gemini
+        console.log(JSON.stringify({ decision: 'allow' }))
+      }
+    } else {
+      // Claude Code expects plain text (or nothing)
+      if (context) {
+        console.log(context)
+      }
     }
   } catch {
-    // Never crash - just output nothing
+    // Never crash - for Gemini, output allow decision on error
+    // options is in scope since it's a function parameter
+    try {
+      if (options.gemini) {
+        console.log(JSON.stringify({ decision: 'allow' }))
+      }
+    } catch {
+      // Ignore
+    }
   }
 }
 
@@ -152,7 +189,7 @@ async function userPrompt(_options: HooksOptions): Promise<void> {
 // This ensures memories are captured before context is lost.
 // ============================================================================
 
-async function curation(_options: HooksOptions): Promise<void> {
+async function curation(options: HooksOptions): Promise<void> {
   // Skip if called from memory curator subprocess
   if (process.env.MEMORY_CURATOR_ACTIVE === '1') return
 
@@ -160,7 +197,7 @@ async function curation(_options: HooksOptions): Promise<void> {
     const input = await readStdinJson()
 
     const sessionId = input.session_id || 'unknown'
-    const cwd = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()
+    const cwd = process.env.CLAUDE_PROJECT_DIR || process.env.GEMINI_PROJECT_DIR || input.cwd || process.cwd()
     const trigger = input.trigger || 'pre_compact'
     const hookEvent = input.hook_event_name || 'PreCompact'
     const projectId = getProjectId(cwd)
@@ -177,16 +214,23 @@ async function curation(_options: HooksOptions): Promise<void> {
         project_id: projectId,
         claude_session_id: sessionId,
         trigger:
-          trigger === 'pre_compact' || trigger === 'manual'
+          trigger === 'pre_compact' || trigger === 'manual' || trigger === 'auto'
             ? 'pre_compact'
             : 'session_end',
         cwd,
+        cli_type: options.gemini ? 'gemini-cli' : 'claude-code',
       }),
       signal: AbortSignal.timeout(5000),
     }).catch(() => null)
 
     if (response?.ok) {
       console.error(success('✨ Memory curation started'))
+      // Gemini's PreCompress hook can output a systemMessage
+      if (options.gemini && hookEvent === 'PreCompress') {
+        console.log(JSON.stringify({
+          systemMessage: '🧠 Memories curated before compression'
+        }))
+      }
     } else {
       console.error(warn('⚠️ Memory server not available'))
     }
