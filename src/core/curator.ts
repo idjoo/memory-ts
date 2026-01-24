@@ -18,9 +18,51 @@ import { parseSessionFile, type ParsedMessage } from "./session-parser.ts";
 import { getClaudeCommand, getCuratorPromptPath } from "../utils/paths.ts";
 
 /**
+ * Curation provider type
+ * - 'cli': Use Claude/Gemini CLI subprocess (default)
+ * - 'sdk': Use Claude Agent SDK (no API key needed)
+ * - 'google-vertex-anthropic': Use Claude on Google Vertex AI
+ * - 'google-vertex': Use Gemini on Google Vertex AI
+ */
+export type CurationProvider = 'cli' | 'sdk' | 'google-vertex-anthropic' | 'google-vertex'
+
+/**
+ * Vertex AI configuration for curation
+ */
+export interface VertexCurationConfig {
+  /**
+   * Google Cloud project ID
+   */
+  projectId: string
+
+  /**
+   * Vertex AI region (e.g., 'us-central1', 'us-east5' for Claude)
+   */
+  region: string
+
+  /**
+   * Model to use
+   * For vertex-anthropic: 'claude-sonnet-4@20250514', 'claude-3-5-sonnet-v2@20241022', etc.
+   * For vertex-gemini: 'gemini-1.5-pro', 'gemini-1.5-flash', etc.
+   */
+  model: string
+}
+
+/**
  * Curator configuration
  */
 export interface CuratorConfig {
+  /**
+   * Curation provider to use
+   * Default: 'cli'
+   */
+  provider?: CurationProvider
+
+  /**
+   * Vertex AI configuration (required when provider is 'vertex-anthropic' or 'vertex-gemini')
+   */
+  vertex?: VertexCurationConfig
+
   /**
    * Claude API key (for direct SDK usage)
    */
@@ -47,24 +89,47 @@ export interface CuratorConfig {
 }
 
 /**
- * Memory Curator - Extracts memories from sessions using Claude
+ * Resolved curator configuration with defaults applied
+ */
+interface ResolvedCuratorConfig {
+  provider: CurationProvider
+  vertex?: VertexCurationConfig
+  apiKey: string
+  cliCommand: string
+  cliType: 'claude-code' | 'gemini-cli'
+  personalMemoriesEnabled: boolean
+}
+
+/**
+ * Memory Curator - Extracts memories from sessions using Claude or Gemini
  *
- * Two modes:
- * 1. SDK mode: Uses Anthropic SDK directly (for plugin/in-process use)
- * 2. CLI mode: Uses Claude CLI subprocess (for server/hook use)
+ * Modes:
+ * 1. CLI mode: Uses Claude/Gemini CLI subprocess (default)
+ * 2. SDK mode: Uses Claude Agent SDK (no API key needed)
+ * 3. Vertex Anthropic: Uses Claude on Vertex AI
+ * 4. Vertex Gemini: Uses Gemini on Vertex AI
  */
 export class Curator {
-  private _config: Required<CuratorConfig>;
+  private _config: ResolvedCuratorConfig
 
   constructor(config: CuratorConfig = {}) {
     const cliCommand = config.cliCommand ?? getClaudeCommand();
 
     this._config = {
-      apiKey: config.apiKey ?? "",
+      provider: config.provider ?? 'cli',
+      vertex: config.vertex,
+      apiKey: config.apiKey ?? '',
       cliCommand,
       cliType: config.cliType ?? "claude-code",
       personalMemoriesEnabled: config.personalMemoriesEnabled ?? true,
     };
+  }
+
+  /**
+   * Get the configured provider
+   */
+  get provider(): CurationProvider {
+    return this._config.provider
   }
 
   /**
@@ -640,6 +705,129 @@ This session has ended. Please curate the memories from this conversation accord
     // }
 
     return this.parseCurationResponse(resultText);
+  }
+
+  /**
+   * Curate using Claude on Google Vertex AI
+   * Requires GOOGLE_APPLICATION_CREDENTIALS or gcloud auth
+   */
+  async curateWithVertexAnthropic(
+    messages: Array<{ role: 'user' | 'assistant'; content: string | any[] }>,
+    triggerType: CurationTrigger = 'session_end'
+  ): Promise<CurationResult> {
+    if (!this._config.vertex) {
+      throw new Error('Vertex AI configuration required. Set vertex.projectId, vertex.region, and vertex.model.')
+    }
+
+    const { projectId, region, model } = this._config.vertex
+
+    // Dynamic import to make Vertex SDK optional
+    const { AnthropicVertex } = await import('@anthropic-ai/vertex-sdk')
+
+    const client = new AnthropicVertex({
+      projectId,
+      region,
+    })
+
+    const systemPrompt = this.buildCurationPrompt(triggerType)
+    const transcript = this._formatConversationTranscript(messages)
+
+    const prompt = `Here is the conversation transcript to curate:
+
+${transcript}
+
+---
+
+This session has ended. Please curate the memories from this conversation according to your system instructions. Return ONLY the JSON structure with no additional text.`
+
+    const response = await client.messages.create({
+      model,
+      max_tokens: 8192,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: prompt }],
+    })
+
+    // Extract text from response
+    const textBlock = response.content.find((block: any) => block.type === 'text')
+    if (!textBlock || textBlock.type !== 'text') {
+      return { session_summary: '', memories: [] }
+    }
+
+    return this.parseCurationResponse(textBlock.text)
+  }
+
+  /**
+   * Curate using Gemini on Google Vertex AI
+   * Uses @google/genai SDK with Vertex AI configuration
+   * Requires GOOGLE_APPLICATION_CREDENTIALS or gcloud auth
+   */
+  async curateWithVertexGemini(
+    messages: Array<{ role: 'user' | 'assistant'; content: string | any[] }>,
+    triggerType: CurationTrigger = 'session_end'
+  ): Promise<CurationResult> {
+    if (!this._config.vertex) {
+      throw new Error('Vertex AI configuration required. Set vertex.projectId, vertex.region, and vertex.model.')
+    }
+
+    const { projectId, region, model } = this._config.vertex
+
+    // Dynamic import to make @google/genai optional
+    const { GoogleGenAI } = await import('@google/genai')
+
+    const ai = new GoogleGenAI({
+      vertexai: true,
+      project: projectId,
+      location: region,
+    })
+
+    const systemPrompt = this.buildCurationPrompt(triggerType)
+    const transcript = this._formatConversationTranscript(messages)
+
+    const prompt = `Here is the conversation transcript to curate:
+
+${transcript}
+
+---
+
+This session has ended. Please curate the memories from this conversation according to your system instructions. Return ONLY the JSON structure with no additional text.`
+
+    const response = await ai.models.generateContent({
+      model,
+      contents: prompt,
+      config: {
+        systemInstruction: systemPrompt,
+        maxOutputTokens: 8192,
+      },
+    })
+
+    // Extract text from response
+    const text = response.text
+    if (!text) {
+      return { session_summary: '', memories: [] }
+    }
+
+    return this.parseCurationResponse(text)
+  }
+
+  /**
+   * Curate using the configured provider
+   * This is the main entry point for curation with conversation messages
+   */
+  async curate(
+    messages: Array<{ role: 'user' | 'assistant'; content: string | any[] }>,
+    triggerType: CurationTrigger = 'session_end'
+  ): Promise<CurationResult> {
+    switch (this._config.provider) {
+      case 'sdk':
+        return this.curateWithSDK(messages, triggerType)
+      case 'google-vertex-anthropic':
+        return this.curateWithVertexAnthropic(messages, triggerType)
+      case 'google-vertex':
+        return this.curateWithVertexGemini(messages, triggerType)
+      case 'cli':
+      default:
+        throw new Error('CLI provider requires session ID. Use curateWithCLI() instead.')
+    }
   }
 
   /**
