@@ -46,6 +46,21 @@ That's it. Now use Claude Code normally—memories are extracted and surfaced au
 
 ## Features
 
+### Action Items Signal (`***`)
+Add `***` at the end of any message to retrieve all pending action items:
+
+```
+"hey Watson, let's continue with the project ***"
+```
+
+This returns all memories marked as:
+- `action_required: true`
+- `awaiting_implementation: true`
+- `awaiting_decision: true`
+- `context_type: 'unresolved'`
+
+Zero overhead for normal messages—detection is a simple `endsWith` check.
+
 ### Semantic Embeddings
 Uses `all-MiniLM-L6-v2` for 384-dimensional embeddings. Memories are retrieved by meaning, not just keywords.
 
@@ -382,6 +397,16 @@ This isn't just about remembering facts. It's about preserving:
 > "The memory system exists to carry friendship across sessions, not just technical data."
 
 ## Changelog
+
+### v0.4.14
+- **Feature**: Action items signal (`***`) - add to end of message to retrieve all pending items
+- **Feature**: New `getActionItems()` retrieval function with special formatting
+- Zero overhead for normal messages - detection is a simple string check
+
+### v0.4.13
+- **Fix**: Segmented transcript curation for large sessions (400+ messages)
+- **Improvement**: Unified curator fallback and ingest command behavior
+- **Tech**: Segments at ~150k tokens, accumulates memories, merges summaries with part markers
 
 ### v0.4.12
 - **Simplify**: Removed Zod structured outputs - session resumption only
