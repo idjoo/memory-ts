@@ -777,3 +777,65 @@ export class SmartVectorRetrieval {
 export function createRetrieval(): SmartVectorRetrieval {
   return new SmartVectorRetrieval()
 }
+
+// ============================================================================
+// ACTION ITEMS RETRIEVAL
+// Returns all memories marked as requiring action
+// Triggered by *** signal at end of message (detected in hook)
+// ============================================================================
+
+/**
+ * Get all memories marked as requiring action
+ *
+ * Filters for memories with:
+ * - action_required: true
+ * - awaiting_implementation: true
+ * - awaiting_decision: true
+ * - context_type: 'todo'
+ *
+ * Returns them sorted by importance, newest first within same importance
+ */
+export function getActionItems(
+  allMemories: StoredMemory[],
+  currentProjectId: string
+): RetrievalResult[] {
+  // Filter to active action items
+  const actionItems = allMemories.filter(memory => {
+    // Must be active
+    if (memory.status && memory.status !== 'active') return false
+    if (memory.exclude_from_retrieval === true) return false
+
+    // Must be for this project or global
+    const isGlobal = memory.scope === 'global' || memory.project_id === 'global'
+    if (!isGlobal && memory.project_id !== currentProjectId) return false
+
+    // Must have at least one action flag
+    return (
+      memory.action_required === true ||
+      memory.awaiting_implementation === true ||
+      memory.awaiting_decision === true ||
+      memory.context_type === 'unresolved'  // unresolved = todos, blockers, open questions
+    )
+  })
+
+  // Sort by importance (desc), then by created_at (desc = newest first)
+  actionItems.sort((a, b) => {
+    const aImportance = a.importance_weight ?? 0.5
+    const bImportance = b.importance_weight ?? 0.5
+    if (bImportance !== aImportance) {
+      return bImportance - aImportance
+    }
+    // Newest first
+    const aTime = a.created_at ?? 0
+    const bTime = b.created_at ?? 0
+    return bTime - aTime
+  })
+
+  // Convert to result format
+  return actionItems.map(memory => ({
+    ...memory,
+    score: 1.0,  // All action items are relevant by definition
+    relevance_score: 1.0,
+    value_score: memory.importance_weight ?? 0.5,
+  }))
+}

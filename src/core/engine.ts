@@ -6,7 +6,7 @@
 import { homedir } from 'os'
 import { join } from 'path'
 import { MemoryStore, createStore } from './store.ts'
-import { SmartVectorRetrieval, createRetrieval, type SessionContext } from './retrieval.ts'
+import { SmartVectorRetrieval, createRetrieval, getActionItems, type SessionContext } from './retrieval.ts'
 import type {
   CuratedMemory,
   StoredMemory,
@@ -67,6 +67,13 @@ export interface EngineConfig {
 }
 
 /**
+ * Retrieval mode
+ * - 'normal': Standard activation signal retrieval (default)
+ * - 'action_items': Return all memories marked as requiring action
+ */
+export type RetrievalMode = 'normal' | 'action_items'
+
+/**
  * Context request parameters
  */
 export interface ContextRequest {
@@ -75,6 +82,7 @@ export interface ContextRequest {
   currentMessage: string
   maxMemories?: number
   projectPath?: string  // Required for 'local' storage mode
+  mode?: RetrievalMode  // Retrieval mode (default: 'normal')
 }
 
 /**
@@ -212,7 +220,23 @@ export class MemoryEngine {
       return { memories: [], formatted: '' }
     }
 
-    // Filter out already-injected memories (deduplication)
+    // ACTION ITEMS MODE: Return all memories marked as requiring action
+    // Triggered by *** signal at end of message
+    if (request.mode === 'action_items') {
+      const actionItems = getActionItems(allMemories, projectId)
+
+      // Update injected memories for deduplication
+      for (const memory of actionItems) {
+        injectedIds.add(memory.id)
+      }
+
+      return {
+        memories: actionItems,
+        formatted: this._formatActionItems(actionItems),
+      }
+    }
+
+    // NORMAL MODE: Filter out already-injected memories (deduplication)
     const candidateMemories = allMemories.filter(m => !injectedIds.has(m.id))
 
     if (!candidateMemories.length) {
@@ -623,6 +647,56 @@ export class MemoryEngine {
       parts.push('')
       parts.push(`---`)
       parts.push(`Expand: curl http://localhost:${port}/memory/expand?ids=<${expandableIds.join(',')}>`)
+    }
+
+    return parts.join('\n')
+  }
+
+  /**
+   * Format action items for injection
+   * Different header to make it clear this is the full action items list
+   */
+  private _formatActionItems(memories: RetrievalResult[]): string {
+    if (!memories.length) {
+      return '# Action Items\n\nNo pending action items found.'
+    }
+
+    const parts: string[] = ['# Action Items']
+    parts.push(`\n*${memories.length} pending item${memories.length === 1 ? '' : 's'}*\n`)
+
+    for (const memory of memories) {
+      const importance = memory.importance_weight?.toFixed(1) || '0.5'
+      const emoji = getMemoryEmoji(memory.context_type || 'general')
+      const age = memory.updated_at ? this._formatAge(memory.updated_at) :
+                  memory.created_at ? this._formatAge(memory.created_at) : ''
+
+      // Flags
+      const flags: string[] = []
+      if (memory.action_required) flags.push('⚡ACTION')
+      if (memory.awaiting_implementation) flags.push('🔨IMPL')
+      if (memory.awaiting_decision) flags.push('❓DECISION')
+      if (memory.context_type === 'unresolved') flags.push('❓UNRESOLVED')
+      const flagStr = flags.length ? ` [${flags.join(' ')}]` : ''
+
+      // Short ID for reference
+      const shortId = memory.id.slice(-6)
+
+      // Display: headline if available, otherwise content
+      const displayText = memory.headline || memory.content
+
+      parts.push(`[${emoji} ${importance} • ${age} • #${shortId}]${flagStr}`)
+      parts.push(`${displayText}`)
+
+      // Always show full content for action items (they need context)
+      if (memory.headline && memory.content) {
+        const contentLines = memory.content.split('\n')
+        for (const line of contentLines) {
+          if (line.trim()) {
+            parts.push(`  ${line}`)
+          }
+        }
+      }
+      parts.push('')  // Blank line between items
     }
 
     return parts.join('\n')

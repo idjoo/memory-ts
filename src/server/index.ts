@@ -43,6 +43,7 @@ interface ContextRequest {
   current_message?: string
   max_memories?: number
   project_path?: string
+  mode?: 'normal' | 'action_items'  // Can be set explicitly or auto-detected via ***
 }
 
 interface ProcessRequest {
@@ -136,26 +137,42 @@ export async function createServer(config: ServerConfig = {}) {
 
           logger.request('POST', '/memory/context', body.project_id)
 
+          // Detect *** signal at end of message for action items mode
+          let message = body.current_message ?? ''
+          let mode = body.mode ?? 'normal'
+
+          if (message.trimEnd().endsWith('***')) {
+            mode = 'action_items'
+            // Strip the *** signal from the message
+            message = message.trimEnd().slice(0, -3).trimEnd()
+            logger.debug('Action items mode detected (*** signal)', 'server')
+          }
+
           const result = await engine.getContext({
             sessionId: body.session_id,
             projectId: body.project_id,
-            currentMessage: body.current_message ?? '',
+            currentMessage: message,
             maxMemories: body.max_memories,
             projectPath: body.project_path,
+            mode,
           })
 
           // Log what happened
           if (result.primer) {
             logger.primer(`Session primer for ${body.project_id}`)
           } else if (result.memories.length > 0) {
-            logger.logRetrievedMemories(
-              result.memories.map(m => ({
-                content: m.content,
-                score: m.score,
-                context_type: m.context_type,
-              })),
-              body.current_message ?? ''
-            )
+            if (mode === 'action_items') {
+              logger.info(`Returning ${result.memories.length} action item${result.memories.length === 1 ? '' : 's'}`)
+            } else {
+              logger.logRetrievedMemories(
+                result.memories.map(m => ({
+                  content: m.content,
+                  score: m.score,
+                  context_type: m.context_type,
+                })),
+                message
+              )
+            }
           }
 
           return Response.json({
@@ -167,6 +184,7 @@ export async function createServer(config: ServerConfig = {}) {
             curator_enabled: true,
             memories_count: result.memories.length,
             has_primer: !!result.primer,
+            mode,  // Include the mode that was used
           }, { headers: corsHeaders })
         }
 
