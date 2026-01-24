@@ -4,11 +4,89 @@
 // ============================================================================
 
 import { MemoryEngine, createEngine, type EngineConfig } from '../core/engine.ts'
-import { Curator, createCurator, type CuratorConfig } from '../core/curator.ts'
-import { EmbeddingGenerator, createEmbeddings } from '../core/embeddings.ts'
+import { Curator, createCurator, type CuratorConfig, type CurationProvider, type VertexCurationConfig } from '../core/curator.ts'
+import { EmbeddingGenerator, createEmbeddings, type EmbeddingConfig, type EmbeddingProvider, type VertexEmbeddingConfig } from '../core/embeddings.ts'
 import { Manager, createManager, type ManagerConfig } from '../core/manager.ts'
 import type { CurationTrigger, CurationResult } from '../types/memory.ts'
 import { logger } from '../utils/logger.ts'
+
+/**
+ * Read curation provider configuration from environment variables
+ * 
+ * Environment variables:
+ * - CURATION_PROVIDER: 'cli' | 'sdk' | 'google-vertex-anthropic' | 'google-vertex'
+ * - VERTEX_CURATION_PROJECT: Google Cloud project ID (for Vertex providers)
+ * - VERTEX_CURATION_REGION: Vertex AI region (for Vertex providers)
+ * - VERTEX_CURATION_MODEL: Model to use (for Vertex providers)
+ */
+function getCurationConfigFromEnv(): Partial<CuratorConfig> {
+  const provider = process.env.CURATION_PROVIDER as CurationProvider | undefined
+
+  if (!provider) {
+    return {}
+  }
+
+  // For Vertex providers, read additional config
+  if (provider === 'google-vertex-anthropic' || provider === 'google-vertex') {
+    const projectId = process.env.VERTEX_CURATION_PROJECT
+    const region = process.env.VERTEX_CURATION_REGION
+    const model = process.env.VERTEX_CURATION_MODEL
+
+    if (!projectId || !region || !model) {
+      logger.warn(
+        `CURATION_PROVIDER=${provider} requires VERTEX_CURATION_PROJECT, VERTEX_CURATION_REGION, and VERTEX_CURATION_MODEL`
+      )
+      return { provider }
+    }
+
+    const vertex: VertexCurationConfig = { projectId, region, model }
+    return { provider, vertex }
+  }
+
+  return { provider }
+}
+
+/**
+ * Read embedding provider configuration from environment variables
+ *
+ * Environment variables:
+ * - EMBEDDING_PROVIDER: 'local' | 'google-vertex'
+ * - VERTEX_EMBEDDING_PROJECT: Google Cloud project ID (for google-vertex)
+ * - VERTEX_EMBEDDING_REGION: Vertex AI region (for google-vertex, default: us-central1)
+ * - VERTEX_EMBEDDING_MODEL: Embedding model (for google-vertex, default: gemini-embedding-001)
+ * - VERTEX_EMBEDDING_DIMENSIONS: Output dimensions (for google-vertex, default: 768)
+ */
+function getEmbeddingConfigFromEnv(): EmbeddingConfig {
+  const provider = process.env.EMBEDDING_PROVIDER as EmbeddingProvider | undefined
+
+  if (!provider || provider === 'local') {
+    return { provider: 'local' }
+  }
+
+  if (provider === 'google-vertex') {
+    const projectId = process.env.VERTEX_EMBEDDING_PROJECT
+    const region = process.env.VERTEX_EMBEDDING_REGION ?? 'us-central1'
+    const model = process.env.VERTEX_EMBEDDING_MODEL
+    const dimensions = process.env.VERTEX_EMBEDDING_DIMENSIONS
+
+    if (!projectId) {
+      logger.warn(
+        `EMBEDDING_PROVIDER=google-vertex requires VERTEX_EMBEDDING_PROJECT`
+      )
+      return { provider: 'local' }
+    }
+
+    const vertex: VertexEmbeddingConfig = {
+      projectId,
+      region,
+      model: model ?? 'gemini-embedding-001',
+      outputDimensionality: dimensions ? parseInt(dimensions, 10) : 768,
+    }
+    return { provider: 'google-vertex', vertex }
+  }
+
+  return { provider: 'local' }
+}
 
 /**
  * Server configuration
@@ -63,6 +141,12 @@ interface CheckpointRequest {
   cli_type?: 'claude-code' | 'gemini-cli'
   project_path?: string
   gemini_api_key?: string
+  /**
+   * Conversation messages for remote curation (Vertex AI providers)
+   * Required when using google-vertex-anthropic or google-vertex providers
+   * Not needed for CLI provider (which resumes the session to get context)
+   */
+  conversation?: Array<{ role: 'user' | 'assistant'; content: string | any[] }>
 }
 
 /**
@@ -86,13 +170,21 @@ export async function createServer(config: ServerConfig = {}) {
     ...engineConfig
   } = config
 
-  // Initialize embeddings (loads model into memory)
-  const embeddings = createEmbeddings()
-  logger.info('Initializing embedding model (this may take a moment on first run)...')
+  // Initialize embeddings (loads model into memory for local, creates client for Vertex)
+  const embeddingConfig = getEmbeddingConfigFromEnv()
+  const embeddings = createEmbeddings(embeddingConfig)
+
+  if (embeddingConfig.provider === 'google-vertex') {
+    logger.info('Initializing Vertex AI embedding client...')
+  } else {
+    logger.info('Initializing local embedding model (this may take a moment on first run)...')
+  }
   await embeddings.initialize()
 
-  // Merge top-level convenience options with nested configs
+  // Merge environment config with passed config (passed config takes precedence)
+  const envCuratorConfig = getCurationConfigFromEnv()
   const finalCuratorConfig: CuratorConfig = {
+    ...envCuratorConfig,
     ...curatorConfig,
     // Top-level option overrides nested if set
     personalMemoriesEnabled: personalMemoriesEnabled ?? curatorConfig?.personalMemoriesEnabled,
@@ -236,10 +328,20 @@ export async function createServer(config: ServerConfig = {}) {
           // Fire and forget - don't block the response
           setImmediate(async () => {
             try {
+              // Route to appropriate curation method based on provider
               let result: CurationResult
+              const provider = curator.provider
 
-              // Branch on CLI type - Gemini CLI vs Claude Code
-              if (body.cli_type === 'gemini-cli') {
+              // 1. Vertex AI providers (require conversation messages from hook)
+              if (provider === 'google-vertex-anthropic' || provider === 'google-vertex') {
+                if (!body.conversation || body.conversation.length === 0) {
+                  logger.warn(`Provider ${provider} requires conversation messages in checkpoint request`)
+                  return
+                }
+                result = await curator.curate(body.conversation, body.trigger)
+              }
+              // 2. Gemini CLI (uses gemini --resume)
+              else if (body.cli_type === 'gemini-cli') {
                 // Use Gemini CLI for curation (no Claude dependency)
                 // Fallback to server's GEMINI_API_KEY if hook didn't pass one
                 // (hooks spawned by Gemini CLI may not inherit env vars)
@@ -251,8 +353,9 @@ export async function createServer(config: ServerConfig = {}) {
                   body.cwd,  // Run from original project directory
                   geminiApiKey
                 )
-              } else {
-                // Default: Use Claude Code (session resume or transcript parsing)
+              }
+              // 3. Claude Code (default - uses claude --resume)
+              else {
                 // Try session resume first (v2) - gets full context including tool uses
                 // Falls back to segmented transcript parsing if resume fails
                 result = await curator.curateWithSessionResume(
@@ -525,6 +628,7 @@ if (import.meta.main) {
   const port = parseInt(process.env.MEMORY_PORT ?? '8765')
   const host = process.env.MEMORY_HOST ?? 'localhost'
   const storageMode = (process.env.MEMORY_STORAGE_MODE ?? 'central') as 'central' | 'local'
+  const centralPath = process.env.MEMORY_STORAGE_PATH // Custom storage path (default: ~/.local/share/memory)
   const apiKey = process.env.ANTHROPIC_API_KEY
 
   // Feature toggles (default: enabled)
@@ -538,6 +642,7 @@ if (import.meta.main) {
       port,
       host,
       storageMode,
+      centralPath,
       managerEnabled,
       personalMemoriesEnabled,
       curator: { apiKey },
