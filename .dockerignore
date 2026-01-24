@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.gitignore
+*.md
+*.nix
+flake.lock
+.envrc
+.direnv
+.claude
+.memory
+scripts
+tests
+*.test.ts
