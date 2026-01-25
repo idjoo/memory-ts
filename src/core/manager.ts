@@ -767,19 +767,13 @@ Use these tools to read existing memories, write updates, and manage the memory 
     const managerSettingsPath = join(managerSettingsDir, 'settings.json')
 
     try {
-      let settings: any = {}
-
-      // Load user's settings if they exist
-      if (existsSync(userSettingsPath)) {
-        const userSettings = await Bun.file(userSettingsPath).text()
-        settings = JSON.parse(userSettings)
+      // Create minimal settings with hooks disabled
+      // Use hooksConfig.enabled = false (correct Gemini CLI format)
+      const settings = {
+        hooksConfig: {
+          enabled: false
+        }
       }
-
-      // Disable hooks (hooks.enabled inside hooks object)
-      if (!settings.hooks) {
-        settings.hooks = {}
-      }
-      settings.hooks.enabled = false
 
       // Ensure .gemini directory exists in managerCwd
       if (!existsSync(managerSettingsDir)) {
