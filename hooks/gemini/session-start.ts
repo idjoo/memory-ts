@@ -55,9 +55,10 @@ async function main() {
     const primer = result.context_text || ''
 
     if (primer) {
-      // Show user exactly what we inject - same formatted content
-      // systemMessage: shown to user in terminal
-      // additionalContext: injected into model context
+      // Log to stderr for visibility
+      console.error(`\x1b[36m[Memory] Injecting session primer (${primer.length} chars)\x1b[0m`)
+
+      // systemMessage IS supported for SessionStart
       console.log(JSON.stringify({
         systemMessage: primer,
         hookSpecificOutput: {
@@ -65,6 +66,8 @@ async function main() {
           additionalContext: primer
         }
       }))
+    } else {
+      console.log(JSON.stringify({}))
     }
   } catch (e) {
     // Fail silently, but ensure we don't output invalid JSON if we crashed mid-stream

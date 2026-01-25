@@ -424,6 +424,11 @@ This isn't just about remembering facts. It's about preserving:
 
 ## Changelog
 
+### v0.5.9
+- **Fix**: Updated Gemini CLI hooks to correctly log injected context using stderr
+- **Fix**: Removed unsupported `systemMessage` field from `BeforeAgent` hook
+- **Improvement**: Added colorful `[Memory]` logs to terminal for visibility of memory injection
+
 ### v0.5.1
 - **Improvement**: Gemini CLI hooks now show injected content to user via `systemMessage`
 - Users see exactly what memories are surfaced (session primer, retrieved memories)

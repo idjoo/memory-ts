@@ -62,6 +62,7 @@ interface CheckpointRequest {
   cwd?: string
   cli_type?: 'claude-code' | 'gemini-cli'
   project_path?: string
+  gemini_api_key?: string
 }
 
 /**
@@ -244,7 +245,8 @@ export async function createServer(config: ServerConfig = {}) {
                 result = await curator.curateWithGeminiCLI(
                   body.claude_session_id,
                   body.trigger,
-                  body.cwd  // Run from original project directory
+                  body.cwd,  // Run from original project directory
+                  body.gemini_api_key
                 )
               } else {
                 // Default: Use Claude Code (session resume or transcript parsing)
@@ -306,7 +308,8 @@ export async function createServer(config: ServerConfig = {}) {
                         body.project_id,
                         sessionNumber,
                         result,
-                        storagePaths
+                        storagePaths,
+                        body.gemini_api_key
                       )
                     } else {
                       // Use Claude Agent SDK mode - more reliable than CLI

@@ -788,6 +788,7 @@ This session has ended. Please curate the memories from this conversation accord
     sessionId: string,
     triggerType: CurationTrigger = "session_end",
     cwd?: string,
+    apiKey?: string,
   ): Promise<CurationResult> {
     const systemPrompt = this.buildCurationPrompt(triggerType);
     const userMessage =
@@ -825,6 +826,7 @@ This session has ended. Please curate the memories from this conversation accord
         ...process.env,
         MEMORY_CURATOR_ACTIVE: "1", // Prevent recursive hook triggering
         GEMINI_SYSTEM_MD: tempPromptPath, // Inject our curation prompt
+        ...(apiKey ? { GEMINI_API_KEY: apiKey } : {}),
       },
       stdout: "pipe",
       stderr: "pipe",

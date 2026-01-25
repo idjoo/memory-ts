@@ -405,6 +405,7 @@ Please process these memories according to your management procedure. Use the ex
     sessionNumber: number,
     result: CurationResult,
     storagePaths?: StoragePaths,
+    apiKey?: string,
   ): Promise<ManagementResult> {
     // Skip if disabled via config or env var
     if (!this._config.enabled || process.env.MEMORY_MANAGER_DISABLED === "1") {
@@ -564,6 +565,7 @@ Use these tools to read existing memories, write updates, and manage the memory 
         ...process.env,
         MEMORY_CURATOR_ACTIVE: "1", // Prevent recursive hook triggering
         GEMINI_SYSTEM_MD: tempPromptPath, // Inject our management prompt
+        ...(apiKey ? { GEMINI_API_KEY: apiKey } : {}),
       },
       stdout: "pipe",
       stderr: "pipe",

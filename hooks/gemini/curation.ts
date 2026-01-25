@@ -53,7 +53,8 @@ async function main() {
         claude_session_id: sessionId, 
         trigger,
         cwd,
-        cli_type: 'gemini-cli'
+        cli_type: 'gemini-cli',
+        gemini_api_key: process.env.GEMINI_API_KEY,
       }),
       signal: AbortSignal.timeout(5000),
     }).catch(() => null)

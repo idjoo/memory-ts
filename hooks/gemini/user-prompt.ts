@@ -55,20 +55,18 @@ async function main() {
     const context = result.context_text || ''
 
     if (context) {
-      // Show user exactly what we inject - same formatted content
-      // systemMessage: shown to user in terminal
-      // additionalContext: injected into model context
+      // Log to stderr for visibility (BeforeAgent doesn't support systemMessage)
+      console.error(`\x1b[36m[Memory] Injecting ${context.length} chars of context\x1b[0m`)
+      
       console.log(JSON.stringify({
-        decision: "allow",
-        systemMessage: context,
         hookSpecificOutput: {
           hookEventName: "BeforeAgent",
           additionalContext: context
         }
       }))
     } else {
-      // No memories to surface - just allow without message
-      console.log(JSON.stringify({ decision: "allow" }))
+      // No memories to surface - output empty JSON (implicit allow)
+      console.log(JSON.stringify({}))
     }
   } catch {
     // Fail safe
