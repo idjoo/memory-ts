@@ -15,33 +15,7 @@ import type {
 } from "../types/memory.ts";
 import { logger } from "../utils/logger.ts";
 import { parseSessionFile, type ParsedMessage } from "./session-parser.ts";
-
-/**
- * Get the correct Claude CLI command path
- * Uses `which` for universal discovery across installation methods
- */
-function getClaudeCommand(): string {
-  // 1. Check for explicit override
-  const envCommand = process.env.CURATOR_COMMAND;
-  if (envCommand) {
-    return envCommand;
-  }
-
-  // 2. Use `which` to find claude in PATH (universal - works with native, homebrew, npm, etc.)
-  const result = Bun.spawnSync(["which", "claude"]);
-  if (result.exitCode === 0) {
-    return result.stdout.toString().trim();
-  }
-
-  // 3. Legacy fallback - hardcoded native install path
-  const claudeLocal = join(homedir(), ".claude", "local", "claude");
-  if (existsSync(claudeLocal)) {
-    return claudeLocal;
-  }
-
-  // 4. Last resort - assume it's in PATH
-  return "claude";
-}
+import { getClaudeCommand, getCuratorPromptPath } from "../utils/paths.ts";
 
 /**
  * Curator configuration
@@ -657,13 +631,13 @@ This session has ended. Please curate the memories from this conversation accord
       `Curator SDK raw response (${resultText.length} chars):`,
       "curator",
     );
-    if (logger.isVerbose()) {
-      const preview =
-        resultText.length > 3000
-          ? resultText.slice(0, 3000) + "...[truncated]"
-          : resultText;
-      console.log(preview);
-    }
+    // if (logger.isVerbose()) {
+    //   const preview =
+    //     resultText.length > 3000
+    //       ? resultText.slice(0, 3000) + "...[truncated]"
+    //       : resultText;
+    //   console.log(preview);
+    // }
 
     return this.parseCurationResponse(resultText);
   }
@@ -730,16 +704,17 @@ This session has ended. Please curate the memories from this conversation accord
     const curationPrompt = this.buildCurationPrompt(triggerType);
 
     logger.debug(
-      `Curator v2: Resuming session ${claudeSessionId}`,
+      `Curator Claude - Resuming session ${claudeSessionId}`,
       "curator",
     );
 
     try {
       const q = query({
-        prompt: "Curate memories from this session according to your system instructions. Return ONLY the JSON structure.",
+        prompt:
+          "Curate memories from this session according to your system instructions. Return ONLY the JSON structure.",
         options: {
           resume: claudeSessionId,
-          appendSystemPrompt: curationPrompt,  // APPEND, don't replace!
+          systemPrompt: curationPrompt,
           model: "claude-opus-4-5-20251101",
           permissionMode: "bypassPermissions",
         },
@@ -749,18 +724,22 @@ This session has ended. Please curate the memories from this conversation accord
       let resultText = "";
       for await (const message of q) {
         // Track usage for debugging
-        if (message.type === "assistant" && "usage" in message && message.usage) {
+        if (
+          message.type === "assistant" &&
+          "usage" in message &&
+          message.usage
+        ) {
           logger.debug(
-            `Curator v2: Tokens used - input: ${message.usage.input_tokens}, output: ${message.usage.output_tokens}`,
+            `Curator Claude - Tokens used - input: ${message.usage}, output: ${message.usage}`,
             "curator",
           );
         }
 
         // Get the result text
         if (message.type === "result") {
-          if (message.subtype === "error") {
+          if (message.subtype !== "success") {
             logger.debug(
-              `Curator v2: Error result - ${JSON.stringify(message)}`,
+              `Curator Claude - Error result - ${JSON.stringify(message)}`,
               "curator",
             );
             return { session_summary: "", memories: [] };
@@ -771,29 +750,28 @@ This session has ended. Please curate the memories from this conversation accord
       }
 
       if (!resultText) {
-        logger.debug("Curator v2: No result text received", "curator");
+        logger.debug("Curator Claude - No result text received", "curator");
         return { session_summary: "", memories: [] };
       }
 
       // Log complete response for debugging
-      logger.debug(
-        `Curator v2: Complete response:\n${resultText}`,
-        "curator",
-      );
+      // logger.debug(
+      //   `Curator Claude - Complete response:\n${resultText}`,
+      //   "curator",
+      // );
 
       // Use existing battle-tested parser
       const result = this.parseCurationResponse(resultText);
 
       logger.debug(
-        `Curator v2: Parsed ${result.memories.length} memories`,
+        `Curator Claude - Parsed ${result.memories.length} memories`,
         "curator",
       );
 
       return result;
-
     } catch (error: any) {
       logger.debug(
-        `Curator v2: Session resume failed: ${error.message}`,
+        `Curator Claude - Session resume failed: ${error.message}`,
         "curator",
       );
       // Return empty - caller should fall back to transcript-based curation
@@ -815,30 +793,29 @@ This session has ended. Please curate the memories from this conversation accord
     const userMessage =
       "This session has ended. Please curate the memories from our conversation according to the instructions in your system prompt. Return ONLY the JSON structure.";
 
-    // Write system prompt to temp file
-    const tempPromptPath = join(homedir(), ".local", "share", "memory", ".gemini-curator-prompt.md");
-
-    // Ensure directory exists
-    const tempDir = join(homedir(), ".local", "share", "memory");
-    if (!existsSync(tempDir)) {
-      const { mkdirSync } = await import("fs");
-      mkdirSync(tempDir, { recursive: true });
-    }
-
+    // Write system prompt to temp file (tmpdir always exists)
+    const tempPromptPath = getCuratorPromptPath();
     await Bun.write(tempPromptPath, systemPrompt);
 
     // Build CLI command
     // Use --resume latest since SessionEnd hook fires immediately after session ends
     const args = [
-      "--resume", "latest",
-      "-p", userMessage,
-      "--output-format", "json",
+      "--resume",
+      "latest",
+      "-p",
+      userMessage,
+      "--output-format",
+      "json",
     ];
 
-    logger.debug(`Curator Gemini: Spawning gemini CLI to resume latest session (triggered by ${sessionId})`, "curator");
-    if (cwd) {
-      logger.debug(`Curator Gemini: Running from project directory: ${cwd}`, "curator");
-    }
+    logger.debug(
+      `Curator Gemini - Spawning gemini CLI to resume latest session (triggered by ${sessionId})`,
+      "curator",
+    );
+    logger.debug(
+      `Curator Gemini - cwd = '${cwd}' | (type: ${typeof cwd})`,
+      "curator",
+    );
 
     // Execute CLI with system prompt via environment variable
     // Must run from original project directory so --resume latest finds correct session
@@ -862,11 +839,14 @@ This session has ended. Please curate the memories from this conversation accord
 
     logger.debug(`Curator Gemini: Exit code ${exitCode}`, "curator");
     if (stderr && stderr.trim()) {
-      logger.debug(`Curator Gemini stderr: ${stderr}`, "curator");
+      logger.debug(`Curator Gemini - stderr: ${stderr}`, "curator");
     }
 
     if (exitCode !== 0) {
-      logger.debug(`Curator Gemini: Failed with exit code ${exitCode}`, "curator");
+      logger.debug(
+        `Curator Gemini - Failed with exit code ${exitCode}`,
+        "curator",
+      );
       return { session_summary: "", memories: [] };
     }
 
@@ -875,10 +855,16 @@ This session has ended. Please curate the memories from this conversation accord
     // We need to extract just the JSON object
     try {
       // Find the JSON object - it starts with { and we need to find the matching }
-      const jsonStart = stdout.indexOf('{');
+      const jsonStart = stdout.indexOf("{");
       if (jsonStart === -1) {
-        logger.debug("Curator Gemini: No JSON object found in output", "curator");
-        logger.debug(`Curator Gemini: Raw stdout: ${stdout.slice(0, 500)}`, "curator");
+        logger.debug(
+          "Curator Gemini - No JSON object found in output",
+          "curator",
+        );
+        // logger.debug(
+        //   `Curator Gemini - Raw stdout: ${stdout.slice(0, 500)}`,
+        //   "curator",
+        // );
         return { session_summary: "", memories: [] };
       }
 
@@ -886,8 +872,8 @@ This session has ended. Please curate the memories from this conversation accord
       let braceCount = 0;
       let jsonEnd = -1;
       for (let i = jsonStart; i < stdout.length; i++) {
-        if (stdout[i] === '{') braceCount++;
-        if (stdout[i] === '}') braceCount--;
+        if (stdout[i] === "{") braceCount++;
+        if (stdout[i] === "}") braceCount--;
         if (braceCount === 0) {
           jsonEnd = i + 1;
           break;
@@ -895,20 +881,35 @@ This session has ended. Please curate the memories from this conversation accord
       }
 
       if (jsonEnd === -1) {
-        logger.debug("Curator Gemini: Could not find matching closing brace", "curator");
+        logger.debug(
+          "Curator Gemini - Could not find matching closing brace",
+          "curator",
+        );
         return { session_summary: "", memories: [] };
       }
 
       const jsonStr = stdout.slice(jsonStart, jsonEnd);
-      logger.debug(`Curator Gemini: Extracted JSON (${jsonStr.length} chars) from position ${jsonStart} to ${jsonEnd}`, "curator");
+      logger.debug(
+        `Curator Gemini - Extracted JSON (${jsonStr.length} chars) from position ${jsonStart} to ${jsonEnd}`,
+        "curator",
+      );
 
       let geminiOutput;
       try {
         geminiOutput = JSON.parse(jsonStr);
-        logger.debug(`Curator Gemini: Parsed outer JSON successfully`, "curator");
+        logger.debug(
+          `Curator Gemini - Parsed outer JSON successfully`,
+          "curator",
+        );
       } catch (outerError: any) {
-        logger.debug(`Curator Gemini: Outer JSON parse failed: ${outerError.message}`, "curator");
-        logger.debug(`Curator Gemini: JSON string (first 500): ${jsonStr.slice(0, 500)}`, "curator");
+        logger.debug(
+          `Curator Gemini - Outer JSON parse failed: ${outerError.message}`,
+          "curator",
+        );
+        // logger.debug(
+        //   `Curator Gemini - JSON string (first 500): ${jsonStr.slice(0, 500)}`,
+        //   "curator",
+        // );
         return { session_summary: "", memories: [] };
       }
 
@@ -917,78 +918,50 @@ This session has ended. Please curate the memories from this conversation accord
       const aiResponse = geminiOutput.response || "";
 
       if (!aiResponse) {
-        logger.debug("Curator Gemini: No response field in output", "curator");
+        logger.debug("Curator Gemini - No response field in output", "curator");
         return { session_summary: "", memories: [] };
       }
 
-      logger.debug(`Curator Gemini: Got response (${aiResponse.length} chars)`, "curator");
+      logger.debug(
+        `Curator Gemini - Got response (${aiResponse.length} chars)`,
+        "curator",
+      );
 
       // Remove markdown code blocks if present
       let cleanResponse = aiResponse;
       const codeBlockMatch = aiResponse.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (codeBlockMatch) {
         cleanResponse = codeBlockMatch[1].trim();
-        logger.debug(`Curator Gemini: Extracted JSON from code block (${cleanResponse.length} chars)`, "curator");
+        logger.debug(
+          `Curator Gemini - Extracted JSON from code block (${cleanResponse.length} chars)`,
+          "curator",
+        );
       } else {
-        logger.debug(`Curator Gemini: No code block found, using raw response`, "curator");
+        logger.debug(
+          `Curator Gemini - No code block found, using raw response`,
+          "curator",
+        );
       }
 
-      logger.debug(`Curator Gemini: Calling parseCurationResponse...`, "curator");
+      logger.debug(
+        `Curator Gemini - Calling parseCurationResponse...`,
+        "curator",
+      );
       // Use existing parser
       const result = this.parseCurationResponse(cleanResponse);
-      logger.debug(`Curator Gemini: Parsed ${result.memories.length} memories`, "curator");
+      logger.debug(
+        `Curator Gemini - Parsed ${result.memories.length} memories`,
+        "curator",
+      );
       return result;
     } catch (error: any) {
       logger.debug(`Curator Gemini: Parse error: ${error.message}`, "curator");
-      logger.debug(`Curator Gemini: Raw stdout (first 500 chars): ${stdout.slice(0, 500)}`, "curator");
+      // logger.debug(
+      //   `Curator Gemini - Raw stdout (first 500 chars): ${stdout.slice(0, 500)}`,
+      //   "curator",
+      // );
       return { session_summary: "", memories: [] };
     }
-  }
-
-  /**
-   * Legacy method: Curate using Anthropic SDK with API key
-   * Kept for backwards compatibility
-   * @deprecated Use curateWithSDK() which uses Agent SDK (no API key needed)
-   */
-  async curateWithAnthropicSDK(
-    messages: Array<{ role: "user" | "assistant"; content: string | any[] }>,
-    triggerType: CurationTrigger = "session_end",
-  ): Promise<CurationResult> {
-    if (!this._config.apiKey) {
-      throw new Error(
-        "API key required for Anthropic SDK mode. Set ANTHROPIC_API_KEY environment variable.",
-      );
-    }
-
-    // Dynamic import to make SDK optional
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const client = new Anthropic({ apiKey: this._config.apiKey });
-
-    const systemPrompt = this.buildCurationPrompt(triggerType);
-
-    // Build the conversation: original messages + curation request
-    const conversationMessages = [
-      ...messages,
-      {
-        role: "user" as const,
-        content:
-          "This session has ended. Please curate the memories from our conversation according to your system instructions. Return ONLY the JSON structure with no additional text.",
-      },
-    ];
-
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 64000,
-      system: systemPrompt,
-      messages: conversationMessages,
-    });
-
-    const content = response.content[0];
-    if (content.type !== "text") {
-      throw new Error("Unexpected response type from Claude API");
-    }
-
-    return this.parseCurationResponse(content.text);
   }
 
   /**
@@ -1002,44 +975,6 @@ This session has ended. Please curate the memories from this conversation accord
     triggerType: CurationTrigger = "session_end",
   ): Promise<CurationResult> {
     return this.curateWithSDK(segment.messages, triggerType);
-  }
-
-  /**
-   * Find and curate from a session file directly (LEGACY - no segmentation)
-   * Uses SDK mode to avoid CLI output truncation issues
-   * @deprecated Use curateFromSessionFileWithSegments() for large sessions
-   */
-  async curateFromSessionFile(
-    sessionId: string,
-    triggerType: CurationTrigger = "session_end",
-    cwd?: string,
-  ): Promise<CurationResult> {
-    // Find the session file
-    const sessionFile = await this._findSessionFile(sessionId, cwd);
-    if (!sessionFile) {
-      logger.debug(
-        `Curator: Could not find session file for ${sessionId}`,
-        "curator",
-      );
-      return { session_summary: "", memories: [] };
-    }
-
-    logger.debug(`Curator: Found session file: ${sessionFile}`, "curator");
-
-    // Parse the session
-    const session = await parseSessionFile(sessionFile);
-    if (session.messages.length === 0) {
-      logger.debug("Curator: Session has no messages", "curator");
-      return { session_summary: "", memories: [] };
-    }
-
-    logger.debug(
-      `Curator: Parsed ${session.messages.length} messages, ~${session.metadata.estimatedTokens} tokens`,
-      "curator",
-    );
-
-    // Use SDK mode with the parsed messages
-    return this.curateWithSDK(session.messages as any, triggerType);
   }
 
   /**
@@ -1069,43 +1004,50 @@ This session has ended. Please curate the memories from this conversation accord
     const sessionFile = await this._findSessionFile(sessionId, cwd);
     if (!sessionFile) {
       logger.debug(
-        `Curator: Could not find session file for ${sessionId}`,
+        `Curator Claude - Could not find session file for ${sessionId}`,
         "curator",
       );
       return { session_summary: "", memories: [] };
     }
 
-    logger.debug(`Curator: Found session file: ${sessionFile}`, "curator");
+    logger.debug(
+      `Curator Claude - Found session file: ${sessionFile}`,
+      "curator",
+    );
 
     // Parse the session to get metadata first
     const session = await parseSessionFile(sessionFile);
     if (session.messages.length === 0) {
-      logger.debug("Curator: Session has no messages", "curator");
+      logger.debug("Curator Claude - Session has no messages", "curator");
       return { session_summary: "", memories: [] };
     }
 
     // Log detailed session stats
     const { metadata } = session;
     logger.debug(
-      `Curator: Session stats - ${metadata.messageCount} messages, ${metadata.toolUseCount} tool_use, ${metadata.toolResultCount} tool_result, thinking: ${metadata.hasThinkingBlocks}, images: ${metadata.hasImages}`,
+      `Curator Claude - Session stats - ${metadata.messageCount} messages, ${metadata.toolUseCount} tool_use, ${metadata.toolResultCount} tool_result, thinking: ${metadata.hasThinkingBlocks}, images: ${metadata.hasImages}`,
       "curator",
     );
     logger.debug(
-      `Curator: Estimated ${metadata.estimatedTokens} tokens, file size ${Math.round(metadata.fileSize / 1024)}KB`,
+      `Curator Claude - Estimated ${metadata.estimatedTokens} tokens, file size ${Math.round(metadata.fileSize / 1024)}KB`,
       "curator",
     );
 
     // Parse into segments using the same function as ingest
-    const { parseSessionFileWithSegments } = await import("./session-parser.ts");
-    const segments = await parseSessionFileWithSegments(sessionFile, maxTokensPerSegment);
+    const { parseSessionFileWithSegments } =
+      await import("./session-parser.ts");
+    const segments = await parseSessionFileWithSegments(
+      sessionFile,
+      maxTokensPerSegment,
+    );
 
     if (segments.length === 0) {
-      logger.debug("Curator: No segments found in session", "curator");
+      logger.debug("Curator Claude - No segments found in session", "curator");
       return { session_summary: "", memories: [] };
     }
 
     logger.debug(
-      `Curator: Split into ${segments.length} segment(s) at ~${Math.round(maxTokensPerSegment / 1000)}k tokens each`,
+      `Curator Claude - Split into ${segments.length} segment(s) at ~${Math.round(maxTokensPerSegment / 1000)}k tokens each`,
       "curator",
     );
 
@@ -1113,7 +1055,8 @@ This session has ended. Please curate the memories from this conversation accord
     const allMemories: CuratedMemory[] = [];
     const sessionSummaries: string[] = [];
     const interactionTones: string[] = [];
-    const projectSnapshots: NonNullable<CurationResult["project_snapshot"]>[] = [];
+    const projectSnapshots: NonNullable<CurationResult["project_snapshot"]>[] =
+      [];
     let failedSegments = 0;
 
     // Curate each segment
@@ -1122,7 +1065,7 @@ This session has ended. Please curate the memories from this conversation accord
       const tokensLabel = `${Math.round(segment.estimatedTokens / 1000)}k`;
 
       logger.debug(
-        `Curator: Processing segment ${segmentLabel} (${segment.messages.length} messages, ~${tokensLabel} tokens)`,
+        `Curator Claude - Processing segment ${segmentLabel} (${segment.messages.length} messages, ~${tokensLabel} tokens)`,
         "curator",
       );
 
@@ -1145,7 +1088,7 @@ This session has ended. Please curate the memories from this conversation accord
         }
 
         logger.debug(
-          `Curator: Segment ${segmentLabel} extracted ${result.memories.length} memories`,
+          `Curator Claude - Segment ${segmentLabel} extracted ${result.memories.length} memories`,
           "curator",
         );
 
@@ -1161,7 +1104,7 @@ This session has ended. Please curate the memories from this conversation accord
       } catch (error: any) {
         failedSegments++;
         logger.debug(
-          `Curator: Segment ${segmentLabel} failed: ${error.message}`,
+          `Curator Claude - Segment ${segmentLabel} failed: ${error.message}`,
           "curator",
         );
       }
@@ -1170,16 +1113,16 @@ This session has ended. Please curate the memories from this conversation accord
     // Log final summary
     if (failedSegments > 0) {
       logger.debug(
-        `Curator: Completed with ${failedSegments} failed segment(s)`,
+        `Curator Claude - Completed with ${failedSegments} failed segment(s)`,
         "curator",
       );
     }
     logger.debug(
-      `Curator: Total ${allMemories.length} memories from ${segments.length} segment(s)`,
+      `Curator Claude - Total ${allMemories.length} memories from ${segments.length} segment(s)`,
       "curator",
     );
     logger.debug(
-      `Curator: Collected ${sessionSummaries.length} summaries, ${projectSnapshots.length} snapshots`,
+      `Curator Claude - Collected ${sessionSummaries.length} summaries, ${projectSnapshots.length} snapshots`,
       "curator",
     );
 
@@ -1196,9 +1139,10 @@ This session has ended. Please curate the memories from this conversation accord
     }
 
     // For interaction tone, use the most common one or the last one
-    const finalTone = interactionTones.length > 0
-      ? interactionTones[interactionTones.length - 1]
-      : undefined;
+    const finalTone =
+      interactionTones.length > 0
+        ? interactionTones[interactionTones.length - 1]
+        : undefined;
 
     // For project snapshot, merge all snapshots - later ones take precedence for phase,
     // but accumulate achievements/challenges/next_steps
@@ -1209,8 +1153,10 @@ This session has ended. Please curate the memories from this conversation accord
       const allNextSteps: string[] = [];
 
       for (const snap of projectSnapshots) {
-        if (snap.recent_achievements) allAchievements.push(...snap.recent_achievements);
-        if (snap.active_challenges) allChallenges.push(...snap.active_challenges);
+        if (snap.recent_achievements)
+          allAchievements.push(...snap.recent_achievements);
+        if (snap.active_challenges)
+          allChallenges.push(...snap.active_challenges);
         if (snap.next_steps) allNextSteps.push(...snap.next_steps);
       }
 
@@ -1283,267 +1229,6 @@ This session has ended. Please curate the memories from this conversation accord
     }
 
     return null;
-  }
-
-  /**
-   * Curate using CLI subprocess (for hook mode)
-   * Resumes a session and asks it to curate
-   */
-  async curateWithCLI(
-    sessionId: string,
-    triggerType: CurationTrigger = "session_end",
-    cwd?: string,
-    cliTypeOverride?: "claude-code" | "gemini-cli",
-  ): Promise<CurationResult> {
-    const type = cliTypeOverride ?? this._config.cliType;
-    const systemPrompt = this.buildCurationPrompt(triggerType);
-    const userMessage =
-      "This session has ended. Please curate the memories from our conversation according to the instructions in your system prompt. Return ONLY the JSON structure.";
-
-    // Build CLI command based on type
-    const args: string[] = [];
-    let command = this._config.cliCommand;
-
-    if (type === "claude-code") {
-      args.push(
-        "--resume",
-        sessionId,
-        "-p",
-        userMessage,
-        "--append-system-prompt",
-        systemPrompt,
-        "--output-format",
-        "json",
-      );
-    } else {
-      // gemini-cli
-      command = "gemini"; // Default to 'gemini' in PATH for gemini-cli
-      args.push(
-        "--resume",
-        sessionId,
-        "-p",
-        `${systemPrompt}\n\n${userMessage}`,
-        "--output-format",
-        "json",
-      );
-    }
-
-    // Execute CLI
-    logger.debug(
-      `Curator: Spawning CLI with CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000`,
-      "curator",
-    );
-    logger.debug(
-      `Curator: Command: ${command} ${args.slice(0, 3).join(" ")}...`,
-      "curator",
-    );
-
-    const proc = Bun.spawn([command, ...args], {
-      cwd,
-      env: {
-        ...process.env,
-        MEMORY_CURATOR_ACTIVE: "1", // Prevent recursive hook triggering
-        CLAUDE_CODE_MAX_OUTPUT_TOKENS: "64000", // Max output to avoid truncation
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    // Capture both stdout and stderr
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    const exitCode = await proc.exited;
-
-    logger.debug(`Curator CLI exit code: ${exitCode}`, "curator");
-    if (stderr && stderr.trim()) {
-      logger.debug(
-        `Curator stderr (${stderr.length} chars): ${stderr}`,
-        "curator",
-      );
-    }
-
-    if (exitCode !== 0) {
-      return { session_summary: "", memories: [] };
-    }
-
-    // Log raw response in verbose mode
-    logger.debug(`Curator CLI raw stdout (${stdout.length} chars):`, "curator");
-    // Always log the last 100 chars to see where output ends
-    logger.debug(`Curator: '${stdout}'`, "curator");
-    if (logger.isVerbose()) {
-      // Show first 2000 chars to avoid flooding console
-      const preview = stdout.length > 2000 ? stdout : stdout;
-      console.log(preview);
-    }
-
-    // Extract JSON from CLI output
-    try {
-      // First, parse the CLI JSON wrapper
-      const cliOutput = JSON.parse(stdout);
-
-      // Claude Code now returns an array of events - find the result object
-      let resultObj: any;
-      if (Array.isArray(cliOutput)) {
-        // New format: array of events, find the one with type="result"
-        resultObj = cliOutput.find((item: any) => item.type === "result");
-        if (!resultObj) {
-          logger.debug(
-            "Curator: No result object found in CLI output array",
-            "curator",
-          );
-          return { session_summary: "", memories: [] };
-        }
-      } else {
-        // Old format: single object (backwards compatibility)
-        resultObj = cliOutput;
-      }
-
-      // Check for error response FIRST (like Python does)
-      if (resultObj.type === "error" || resultObj.is_error === true) {
-        logger.debug(
-          `Curator: Error response from CLI: ${JSON.stringify(resultObj)}`,
-          "curator",
-        );
-        return { session_summary: "", memories: [] };
-      }
-
-      // Extract the "result" field (AI's response text)
-      let aiResponse = "";
-      if (typeof resultObj.result === "string") {
-        aiResponse = resultObj.result;
-      } else {
-        logger.debug(
-          `Curator: result field is not a string: ${typeof resultObj.result}`,
-          "curator",
-        );
-        return { session_summary: "", memories: [] };
-      }
-
-      // Log the AI response in verbose mode
-      logger.debug(
-        `Curator AI response (${aiResponse.length} chars):`,
-        "curator",
-      );
-      if (logger.isVerbose()) {
-        const preview = aiResponse.length > 3000 ? aiResponse : aiResponse;
-        console.log(preview);
-      }
-
-      // Remove markdown code blocks if present (```json ... ```)
-      const codeBlockMatch = aiResponse.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (codeBlockMatch) {
-        logger.debug(
-          `Curator: Code block matched, extracting ${codeBlockMatch[1]!.length} chars`,
-          "curator",
-        );
-        aiResponse = codeBlockMatch[1]!.trim();
-      } else {
-        logger.debug(
-          `Curator: No code block found, using raw response`,
-          "curator",
-        );
-        // Log the last 200 chars to see where truncation happened
-        if (aiResponse.length > 200) {
-          logger.debug(`Curator: ${aiResponse}`, "curator");
-        }
-      }
-
-      // Now find the JSON object (same regex as Python)
-      const jsonMatch = aiResponse.match(/\{[\s\S]*\}/)?.[0];
-      if (jsonMatch) {
-        logger.debug(
-          `Curator: Found JSON object (${jsonMatch.length} chars), parsing...`,
-          "curator",
-        );
-
-        // Detect likely truncation: JSON much smaller than response
-        const likelyTruncated = jsonMatch.length < aiResponse.length * 0.5;
-
-        if (likelyTruncated) {
-          logger.debug(
-            `Curator: WARNING - JSON (${jsonMatch.length}) much smaller than response (${aiResponse.length}) - likely truncated`,
-            "curator",
-          );
-          // Find the last } position and log what's around it
-          const lastBrace = aiResponse.lastIndexOf("}");
-          logger.debug(
-            `Curator: Last } at position ${lastBrace}, char before: '${aiResponse[lastBrace - 1]}', char after: '${aiResponse[lastBrace + 1] || "EOF"}'`,
-            "curator",
-          );
-          // Log chars around the cut point
-          const cutPoint = jsonMatch.length;
-          logger.debug(
-            `Curator: Around match end (${cutPoint}): '...${aiResponse.slice(Math.max(0, cutPoint - 50), cutPoint + 50)}...'`,
-            "curator",
-          );
-        }
-
-        const result = this.parseCurationResponse(jsonMatch);
-
-        // If we got 0 memories and likely truncated, try SDK fallback
-        if (result.memories.length === 0 && likelyTruncated) {
-          logger.debug(
-            "Curator: CLI mode returned 0 memories with truncation detected, trying SDK fallback...",
-            "curator",
-          );
-          return this._fallbackToSDK(sessionId, triggerType, cwd);
-        }
-
-        return result;
-      } else {
-        logger.debug("Curator: No JSON object found in AI response", "curator");
-      }
-    } catch (error: any) {
-      // Parse error - return empty result
-      logger.debug(`Curator: Parse error: ${error.message}`, "curator");
-    }
-
-    // CLI mode failed - try SDK fallback
-    logger.debug("Curator: CLI mode failed, trying SDK fallback...", "curator");
-    return this._fallbackToSDK(sessionId, triggerType, cwd);
-  }
-
-  /**
-   * Fallback to SDK mode when CLI mode fails (e.g., output truncation)
-   * Now uses segmented approach for large sessions
-   */
-  private async _fallbackToSDK(
-    sessionId: string,
-    triggerType: CurationTrigger,
-    cwd?: string,
-  ): Promise<CurationResult> {
-    try {
-      // Use segmented approach - same as ingest command
-      const result = await this.curateFromSessionFileWithSegments(
-        sessionId,
-        triggerType,
-        cwd,
-        150000, // 150k tokens per segment
-        (progress) => {
-          logger.debug(
-            `Curator fallback: Segment ${progress.segmentIndex + 1}/${progress.totalSegments} → ${progress.memoriesExtracted} memories`,
-            "curator",
-          );
-        },
-      );
-      if (result.memories.length > 0) {
-        logger.debug(
-          `Curator: SDK fallback succeeded with ${result.memories.length} memories`,
-          "curator",
-        );
-      } else {
-        logger.debug(
-          "Curator: SDK fallback also returned 0 memories",
-          "curator",
-        );
-      }
-      return result;
-    } catch (error: any) {
-      logger.debug(`Curator: SDK fallback failed: ${error.message}`, "curator");
-      return { session_summary: "", memories: [] };
-    }
   }
 }
 
