@@ -90,6 +90,7 @@ export async function serve(options: ServeOptions) {
   const storageMode = (process.env.MEMORY_STORAGE_MODE || 'central') as
     | 'central'
     | 'local'
+  const centralPath = process.env.MEMORY_STORAGE_PATH // Custom storage path (for Docker)
   const apiKey = process.env.ANTHROPIC_API_KEY
 
   // Set verbose mode for logger
@@ -108,6 +109,7 @@ export async function serve(options: ServeOptions) {
       port,
       host,
       storageMode,
+      centralPath,
       curator: { apiKey },
     })
 

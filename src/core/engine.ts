@@ -154,7 +154,13 @@ export class MemoryEngine {
       basePath = this._config.centralPath
     }
 
-    const store = createStore({ basePath })
+    // When using a custom centralPath, derive globalPath from it
+    // This ensures Docker environments with MEMORY_STORAGE_PATH=/data use /data/global
+    const globalPath = this._config.storageMode === 'central'
+      ? join(this._config.centralPath, 'global')
+      : undefined  // Local mode uses default global path
+
+    const store = createStore({ basePath, globalPath })
     this._stores.set(key, store)
     return store
   }
@@ -751,9 +757,8 @@ export class MemoryEngine {
     personalPrimerPath: string
     storageMode: 'central' | 'local'
   } {
-    // Global paths are ALWAYS in central location (from DEFAULT_GLOBAL_PATH in store.ts)
-    // This is a constant: ~/.local/share/memory/global
-    const globalPath = join(homedir(), '.local', 'share', 'memory', 'global')
+    // Global paths are derived from centralPath config (supports Docker MEMORY_STORAGE_PATH)
+    const globalPath = join(this._config.centralPath, 'global')
     const globalMemoriesPath = join(globalPath, 'memories')
     // Personal primer has its own dedicated collection (not in memories)
     const personalPrimerPath = join(globalPath, 'primer', 'personal-primer.md')
