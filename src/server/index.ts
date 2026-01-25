@@ -65,6 +65,13 @@ interface CheckpointRequest {
 }
 
 /**
+ * Track sessions currently being curated to prevent recursive calls.
+ * When Gemini CLI spawns hooks, env vars may not propagate, so we
+ * need server-side deduplication.
+ */
+const sessionsBeingCurated = new Set<string>()
+
+/**
  * Create and start the memory server
  */
 export async function createServer(config: ServerConfig = {}) {
@@ -210,6 +217,19 @@ export async function createServer(config: ServerConfig = {}) {
         if (path === '/memory/checkpoint' && req.method === 'POST') {
           const body = await req.json() as CheckpointRequest
 
+          // Prevent recursive curation - Gemini CLI doesn't propagate env vars to hooks
+          // so MEMORY_CURATOR_ACTIVE check in hooks doesn't work. Dedupe at server level.
+          if (sessionsBeingCurated.has(body.claude_session_id)) {
+            logger.debug(`Skipping duplicate curation request for session ${body.claude_session_id}`, 'server')
+            return Response.json({
+              success: true,
+              message: 'Curation already in progress for this session',
+            }, { headers: corsHeaders })
+          }
+
+          // Mark session as being curated BEFORE async work starts
+          sessionsBeingCurated.add(body.claude_session_id)
+
           logger.logCurationStart(body.claude_session_id, body.trigger)
 
           // Fire and forget - don't block the response
@@ -339,6 +359,9 @@ export async function createServer(config: ServerConfig = {}) {
               }
             } catch (error) {
               logger.error(`Curation failed: ${error}`)
+            } finally {
+              // Release the session lock - allows future curation requests for this session
+              sessionsBeingCurated.delete(body.claude_session_id)
             }
           })
 
