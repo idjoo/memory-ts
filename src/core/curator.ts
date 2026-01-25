@@ -809,6 +809,7 @@ This session has ended. Please curate the memories from this conversation accord
   async curateWithGeminiCLI(
     sessionId: string,
     triggerType: CurationTrigger = "session_end",
+    cwd?: string,
   ): Promise<CurationResult> {
     const systemPrompt = this.buildCurationPrompt(triggerType);
     const userMessage =
@@ -835,9 +836,14 @@ This session has ended. Please curate the memories from this conversation accord
     ];
 
     logger.debug(`Curator Gemini: Spawning gemini CLI to resume latest session (triggered by ${sessionId})`, "curator");
+    if (cwd) {
+      logger.debug(`Curator Gemini: Running from project directory: ${cwd}`, "curator");
+    }
 
     // Execute CLI with system prompt via environment variable
+    // Must run from original project directory so --resume latest finds correct session
     const proc = Bun.spawn(["gemini", ...args], {
+      cwd: cwd || undefined,
       env: {
         ...process.env,
         MEMORY_CURATOR_ACTIVE: "1", // Prevent recursive hook triggering

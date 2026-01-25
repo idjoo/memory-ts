@@ -243,7 +243,8 @@ export async function createServer(config: ServerConfig = {}) {
                 logger.debug('Using Gemini CLI for curation', 'server')
                 result = await curator.curateWithGeminiCLI(
                   body.claude_session_id,
-                  body.trigger
+                  body.trigger,
+                  body.cwd  // Run from original project directory
                 )
               } else {
                 // Default: Use Claude Code (session resume or transcript parsing)
