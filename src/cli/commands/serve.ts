@@ -135,6 +135,14 @@ export async function serve(options: ServeOptions) {
         console.log(c.muted(`    Use 'memory migrate --dry-run' to preview changes first`))
       }
 
+      // Note for Gemini CLI API key auth users (OAuth users don't need this)
+      if (!process.env.GEMINI_API_KEY) {
+        console.log()
+        console.log(c.muted(`  ${symbols.info} Using Gemini CLI with API key auth?`))
+        console.log(c.muted(`    Run: GEMINI_API_KEY=your-key memory serve`))
+        console.log(c.muted(`    (OAuth users can ignore this)`))
+      }
+
       console.log()
       console.log(c.muted(`  Press Ctrl+C to stop`))
       console.log()

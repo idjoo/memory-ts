@@ -241,12 +241,15 @@ export async function createServer(config: ServerConfig = {}) {
               // Branch on CLI type - Gemini CLI vs Claude Code
               if (body.cli_type === 'gemini-cli') {
                 // Use Gemini CLI for curation (no Claude dependency)
+                // Fallback to server's GEMINI_API_KEY if hook didn't pass one
+                // (hooks spawned by Gemini CLI may not inherit env vars)
+                const geminiApiKey = body.gemini_api_key || process.env.GEMINI_API_KEY
                 logger.debug('Using Gemini CLI for curation', 'server')
                 result = await curator.curateWithGeminiCLI(
                   body.claude_session_id,
                   body.trigger,
                   body.cwd,  // Run from original project directory
-                  body.gemini_api_key
+                  geminiApiKey
                 )
               } else {
                 // Default: Use Claude Code (session resume or transcript parsing)
@@ -303,13 +306,15 @@ export async function createServer(config: ServerConfig = {}) {
                     let managementResult
                     if (cliType === 'gemini-cli') {
                       // Use Gemini CLI for management (no Claude dependency)
+                      // Use same API key fallback as curation (hooks don't inherit env vars)
+                      const geminiApiKey = body.gemini_api_key || process.env.GEMINI_API_KEY
                       logger.debug('Using Gemini CLI for management', 'server')
                       managementResult = await manager.manageWithGeminiCLI(
                         body.project_id,
                         sessionNumber,
                         result,
                         storagePaths,
-                        body.gemini_api_key
+                        geminiApiKey
                       )
                     } else {
                       // Use Claude Agent SDK mode - more reliable than CLI
