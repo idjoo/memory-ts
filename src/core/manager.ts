@@ -767,11 +767,16 @@ Use these tools to read existing memories, write updates, and manage the memory 
     const managerSettingsPath = join(managerSettingsDir, 'settings.json')
 
     try {
-      // Create minimal settings with hooks disabled
-      // Use hooksConfig.enabled = false (correct Gemini CLI format)
+      // Disable memory hooks to prevent recursive curation
+      // Format: hooks.disabled array with hook command names
       const settings = {
-        hooksConfig: {
-          enabled: false
+        hooks: {
+          disabled: [
+            "inject-memories",
+            "load-session-primer",
+            "curate-memories",
+            "curate-memories"
+          ]
         }
       }
 
